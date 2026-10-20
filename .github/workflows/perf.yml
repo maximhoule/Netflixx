@@ -1,0 +1,73 @@
+name: Performance A/B
+
+# Builds the current app and an older version, then measures both on the same emulator,
+# alternating between them, so machine-to-machine speed differences cancel out.
+on:
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: "Older commit to compare against"
+        required: true
+        default: "83d6cff"
+
+permissions:
+  contents: write
+
+jobs:
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Build current and baseline APKs
+        env:
+          VERSION_CODE: "100000"
+        run: |
+          gradle :app:assembleRelease --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk New.apk
+          git worktree add /tmp/base "${{ github.event.inputs.baseline }}"
+          (cd /tmp/base && gradle :app:assembleRelease --no-daemon)
+          cp /tmp/base/app/build/outputs/apk/release/app-release.apk Base.apk
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Measure on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: default
+          profile: tv_1080p
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
+          disable-animations: false
+          script: bash .github/scripts/perf-compare.sh
+
+      - name: Pack results
+        if: always()
+        run: cd perf && zip -qr ../perf-results.zip .
+
+      - name: Publish results
+        if: always()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: perf-results-${{ github.run_number }}
+          name: Performance A/B ${{ github.run_number }}
+          prerelease: true
+          make_latest: false
+          files: perf-results.zip

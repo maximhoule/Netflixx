@@ -685,7 +685,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
 
     // ---------------------------------------------------------------- progress + exit
 
-    private fun saveProgress(sync: Boolean) {
+    private fun saveProgress(sync: Boolean, stopped: Boolean = false) {
         if (!::player.isInitialized) return
         val dur = player.duration
         val pos = player.currentPosition
@@ -695,14 +695,14 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         Store.saveProgress(LocalProgress(metaId, type, name, poster, videoId, p, dur, System.currentTimeMillis()))
         if (sync && Store.syncProgress) {
             val t = type; val m = metaId; val v = videoId; val nx = next?.id; val n = name; val ps = poster
-            AppScope.launch { Repo.syncProgress(t, m, v, p, dur, finished, nx, n, ps) }
+            AppScope.launch { Repo.syncProgress(t, m, v, p, dur, finished, nx, n, ps, stopped) }
         }
     }
 
     override fun finish() {
         if (!finishing) {
             finishing = true
-            if (started) saveProgress(sync = true)
+            if (started) saveProgress(sync = true, stopped = true)
             setResult(
                 RESULT_OK,
                 Intent().putExtra("outcome", outcome).putExtra("videoId", outcomeVideo).putExtra("auto", outcomeAuto),

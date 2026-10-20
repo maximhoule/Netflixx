@@ -231,8 +231,10 @@ fun CardMenuOverlay(model: AppModel) {
             val options = mutableListOf<Pair<String, () -> Unit>>()
             options += "Details" to { model.closeCardMenu(); model.openDetail(meta) }
             if (m.item.videoId != null) options += "Resume" to { model.closeCardMenu(); model.resume(m.item) }
-            options += (if (model.inMyList(meta.id)) "Remove from My List" else "Add to My List") to {
-                model.toggleMyList(meta); model.closeCardMenu()
+            if (!com.maxim.marquee.data.Emby.isEmby(meta.id)) {
+                options += (if (model.inMyList(meta.id)) "Remove from My List" else "Add to My List") to {
+                    model.toggleMyList(meta); model.closeCardMenu()
+                }
             }
             if (m.fromContinue) options += "Remove from Continue Watching" to { model.dismissContinue(m.item); model.closeCardMenu() }
             options.forEachIndexed { i, (label, action) ->
@@ -493,6 +495,17 @@ fun SettingsScreen(model: AppModel) {
         SettingRow("Reload addons", if (model.syncing) "Loading…" else "${model.addonCount} installed", "Pick up changes made in Stremio") {
             scope.launch { model.start() }
         }
+        if (com.maxim.marquee.data.Emby.connected) {
+            SettingRow(
+                "Emby server",
+                "Connected · ${Store.embyUserName ?: ""}",
+                (Store.embyServer ?: "") + " — select to disconnect",
+            ) { model.embySignOut(); version++ }
+        } else {
+            SettingRow("Emby server", "Not connected", "Add your Emby (or Jellyfin) server to see its shows here") {
+                model.stack.add(com.maxim.marquee.Screen.EmbyLogin)
+            }
+        }
         SettingRow("Signed in as", Store.email ?: "", "Select to sign out") { model.signOut() }
         Text(
             "Addons: " + Repo.addons.joinToString(", ") { it.name },
@@ -513,6 +526,77 @@ private fun SettingRow(title: String, value: String, hint: String? = null, fr: F
                 hint?.let { Text(it, color = if (f) Color(0xFF444444) else C.Dim, fontSize = 13.sp) }
             }
             Text(value, color = if (f) Color.Black else C.Dim, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+// ---------------------------------------------------------------- Emby sign-in
+
+@Composable
+fun EmbyLoginScreen(model: AppModel) {
+    var address by remember { mutableStateOf(Store.embyServer ?: "") }
+    var user by remember { mutableStateOf(Store.embyUserName ?: "") }
+    var password by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val focus = LocalFocusManager.current
+    val firstFr = remember { FocusRequester() }
+    LaunchedEffect(Unit) { withFrameNanos { }; tryFocus(firstFr) }
+
+    fun submit() {
+        if (busy || address.isBlank() || user.isBlank()) return
+        busy = true; error = null
+        model.embyLogin(address, user, password) { msg -> error = msg; busy = false }
+    }
+
+    val fieldColors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+        focusedBorderColor = Color.White, unfocusedBorderColor = Color(0xFF666666),
+        focusedLabelColor = Color.White, unfocusedLabelColor = C.Dim, cursorColor = C.Red,
+    )
+    Row(Modifier.fillMaxSize().background(C.Bg).padding(64.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(end = 48.dp)) {
+            Text("Connect Emby", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Your Emby shows and movies will appear on Home, with Continue Watching and Next Up. " +
+                    "Playback is direct from your server, and progress syncs back to Emby. Jellyfin servers work too.",
+                color = C.Dim, fontSize = 16.sp, lineHeight = 22.sp,
+            )
+            Spacer(Modifier.height(10.dp))
+            Text("Address example: 192.168.1.20:8096", color = C.Dim, fontSize = 14.sp)
+        }
+        Column(Modifier.width(420.dp)) {
+            OutlinedTextField(
+                value = address, onValueChange = { address = it }, singleLine = true,
+                label = { Text("Server address") }, colors = fieldColors,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
+                keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Down) }),
+                modifier = Modifier.fillMaxWidth().focusRequester(firstFr),
+            )
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = user, onValueChange = { user = it }, singleLine = true,
+                label = { Text("Username") }, colors = fieldColors,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Down) }),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = password, onValueChange = { password = it }, singleLine = true,
+                label = { Text("Password") }, colors = fieldColors,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { focus.moveFocus(FocusDirection.Down) }),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(18.dp))
+            ActionButton(if (busy) "Connecting…" else "Connect", modifier = Modifier.fillMaxWidth(), onClick = { submit() })
+            error?.let {
+                Spacer(Modifier.height(10.dp))
+                Text(it, color = C.Red, fontSize = 15.sp)
+            }
         }
     }
 }

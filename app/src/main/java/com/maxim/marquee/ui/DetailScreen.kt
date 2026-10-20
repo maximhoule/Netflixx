@@ -118,12 +118,14 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
                 meta.trailer?.let { yt ->
                     ActionButton(text = "Trailer", icon = PlayerIcons.Trailer, onClick = { model.playTrailer(yt) })
                 }
-                val inList = model.inMyList(meta.id)
-                ActionButton(
-                    text = "My List",
-                    icon = if (inList) PlayerIcons.Check else Icons.Filled.Add,
-                    onClick = { model.toggleMyList(meta) },
-                )
+                if (!com.maxim.marquee.data.Emby.isEmby(meta.id)) {
+                    val inList = model.inMyList(meta.id)
+                    ActionButton(
+                        text = "My List",
+                        icon = if (inList) PlayerIcons.Check else Icons.Filled.Add,
+                        onClick = { model.toggleMyList(meta) },
+                    )
+                }
                 ActionButton(
                     text = "Sources",
                     icon = Icons.AutoMirrored.Filled.List,

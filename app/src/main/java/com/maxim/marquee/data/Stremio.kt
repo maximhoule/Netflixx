@@ -107,6 +107,9 @@ object Repo {
 
     suspend fun meta(type: String, id: String): MetaItem? {
         cachedMeta(type, id)?.let { return it }
+        if (Emby.isEmby(id)) {
+            return Emby.meta(id)?.also { metaCache.put("$type/$id", it) }
+        }
         for (a in addons.filter { it.supports("meta", type, id) }) {
             val o = Http.getJson("${a.base}/meta/$type/${enc(id)}.json")?.obj("meta") ?: continue
             val m = withContext(Dispatchers.Default) { MetaItem.parse(o, type) } ?: continue
@@ -137,6 +140,7 @@ object Repo {
      * of waiting for the slowest addon. Hard cap of 15 seconds.
      */
     suspend fun bestStreams(type: String, videoId: String): List<StreamItem> {
+        if (Emby.isEmby(videoId)) return Emby.streams(videoId)
         val list = streamAddons(type, videoId)
         if (list.isEmpty()) return emptyList()
         // Detached, so a slow addon never holds up playback; it just finishes in the background.
@@ -158,13 +162,20 @@ object Repo {
     }
 
     /** Emits (addonIndex, addon, streams) as each addon answers. */
+    private val embyAddon = Addon("emby://", "emby", "Emby", emptyList(), emptyList())
+
     fun streamsFlow(type: String, videoId: String): Flow<Triple<Int, Addon, List<StreamItem>>> = channelFlow {
+        if (Emby.isEmby(videoId)) {
+            send(Triple(0, embyAddon, Emby.streams(videoId)))
+            return@channelFlow
+        }
         streamAddons(type, videoId).forEachIndexed { i, a ->
             launch { send(Triple(i, a, fetchStreams(a, type, videoId))) }
         }
     }
 
     suspend fun subtitles(type: String, videoId: String): List<SubTrack> = coroutineScope {
+        if (Emby.isEmby(videoId)) return@coroutineScope emptyList()
         addons.filter { it.supports("subtitles", type, videoId) }.map { a ->
             async {
                 withTimeoutOrNull(6_000) {
@@ -178,7 +189,8 @@ object Repo {
 
     suspend fun search(query: String): List<Pair<String, List<MetaItem>>> = coroutineScope {
         val q = enc(query).replace(":", "%3A")
-        addons.flatMap { a -> a.catalogs.filter { it.supportsSearch }.map { a to it } }
+        val emby = if (Emby.connected) async { "Your Emby library" to Emby.search(query) } else null
+        val stremio = addons.flatMap { a -> a.catalogs.filter { it.supportsSearch }.map { a to it } }
             .map { (a, c) ->
                 async {
                     val items = Http.getMapped("${a.base}/catalog/${c.type}/${enc(c.id)}/search=$q.json") { o ->
@@ -186,7 +198,8 @@ object Repo {
                     } ?: emptyList()
                     "${typeLabel(c.type)} · ${a.name}" to items
                 }
-            }.awaitAll().filter { it.second.isNotEmpty() }
+            }
+        (listOfNotNull(emby) + stremio).awaitAll().filter { it.second.isNotEmpty() }
     }
 
     suspend fun library(): List<LibEntry> {
@@ -206,8 +219,12 @@ object Repo {
      */
     suspend fun syncProgress(
         type: String, metaId: String, videoId: String, pos: Long, dur: Long, finished: Boolean,
-        nextVideoId: String? = null, name: String? = null, poster: String? = null,
+        nextVideoId: String? = null, name: String? = null, poster: String? = null, stopped: Boolean = false,
     ) {
+        if (Emby.isEmby(videoId)) {
+            safe { Emby.report(videoId, pos, finished, stopped) }
+            return
+        }
         val key = Store.authKey ?: return
         safe {
             // Not in the library yet: create a temporary entry, exactly like Stremio does when you
@@ -299,6 +316,7 @@ object Repo {
 
     /** Intro / recap / credits timestamps from IntroDB (community data, no key needed). */
     suspend fun segments(videoId: String): Segments? {
+        if (Emby.isEmby(videoId)) return Emby.introKeys[videoId]?.let { segments(it) }
         val p = videoId.split(":")
         if (p.size < 3 || !p[0].startsWith("tt")) return null
         val season = p[p.size - 2].toIntOrNull() ?: return null

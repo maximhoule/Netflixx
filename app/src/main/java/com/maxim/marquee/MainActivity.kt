@@ -23,6 +23,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import com.maxim.marquee.ui.C
 import com.maxim.marquee.ui.CardMenuOverlay
 import com.maxim.marquee.ui.DetailScreen
+import com.maxim.marquee.ui.EmbyLoginScreen
 import com.maxim.marquee.ui.LoadingOverlay
 import com.maxim.marquee.ui.LoginScreen
 import com.maxim.marquee.ui.MainShell
@@ -134,6 +135,7 @@ fun AppRoot(model: AppModel, exit: () -> Unit) {
                         null -> MainShell(model, railRequesters)
                         is Screen.Detail -> DetailScreen(model, top)
                         is Screen.Streams -> StreamsScreen(model, top)
+                        is Screen.EmbyLogin -> EmbyLoginScreen(model)
                     }
                 }
                 // Back: close the top screen; on the home screens go to the menu first, then exit.

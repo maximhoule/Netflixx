@@ -98,6 +98,26 @@ object Store {
         get() = string("audioLang")
         set(v) = setString("audioLang", v)
 
+    // ---- Emby server ----
+    var embyServer: String?
+        get() = string("embyServer")
+        set(v) = setString("embyServer", v)
+    var embyToken: String?
+        get() = string("embyToken")
+        set(v) = setString("embyToken", v)
+    var embyUserId: String?
+        get() = string("embyUserId")
+        set(v) = setString("embyUserId", v)
+    var embyUserName: String?
+        get() = string("embyUserName")
+        set(v) = setString("embyUserName", v)
+    val deviceId: String
+        get() = string("deviceId") ?: java.util.UUID.randomUUID().toString().also { setString("deviceId", it) }
+
+    fun embySignOut() {
+        prefs.edit().remove("embyServer").remove("embyToken").remove("embyUserId").remove("embyUserName").apply()
+    }
+
     fun signOut() {
         prefs.edit().remove("authKey").remove("addons").apply()
     }

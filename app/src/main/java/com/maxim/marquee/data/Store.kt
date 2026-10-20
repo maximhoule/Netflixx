@@ -138,7 +138,7 @@ object Store {
         bibliographic[c]?.let { return it }
         val base = c.substringBefore('-').substringBefore('_')
         bibliographic[base]?.let { return it }
-        return safe { Locale(base).isO3Language }?.takeIf { it.isNotBlank() } ?: base
+        return safe { Locale.forLanguageTag(base).isO3Language }?.takeIf { it.isNotBlank() } ?: base
     }
 
     fun wantsSubtitle(lang: String): Boolean {

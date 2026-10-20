@@ -20,7 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -108,7 +108,7 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
                 )
                 ActionButton(
                     text = "Sources",
-                    icon = Icons.Filled.List,
+                    icon = Icons.AutoMirrored.Filled.List,
                     onClick = { model.play(req, chooseSource = true) },
                 )
             }

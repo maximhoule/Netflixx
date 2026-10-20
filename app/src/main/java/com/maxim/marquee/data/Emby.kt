@@ -56,17 +56,59 @@ object Emby {
 
     // ---------------------------------------------------------------- sign in
 
-    /** Signs in and remembers the server. Accepts "192.168.1.10:8096", "http://…", or ".../emby". */
-    suspend fun login(address: String, username: String, password: String) {
-        var a = address.trim().trimEnd('/')
-        if (a.isEmpty()) throw IOException("Enter your server address")
-        if (!a.startsWith("http://") && !a.startsWith("https://")) a = "http://$a"
-        if (!Regex("^https?://[^/]+:\\d+").containsMatchIn(a) && !a.startsWith("https://") && a.count { it == '/' } <= 2) {
-            a = "$a:8096" // Emby's default port
+    /**
+     * Every address worth trying for what you typed: a full server URL ("https://emby.example.com",
+     * "http://myserver.duckdns.org:8096"), a link copied from the Emby web app ("…/web/index.html#!/home"),
+     * or a plain address ("192.168.1.20:8096", "emby.example.com"). With and without "/emby".
+     */
+    fun candidates(input: String): List<String> {
+        var a = input.trim().trimEnd('/')
+        if (a.isEmpty()) return emptyList()
+        // Links copied from the browser: drop the web-app part, query and #fragment.
+        a = a.substringBefore('#').substringBefore('?')
+        Regex("(?i)/web(/.*)?$").find(a)?.let { a = a.substring(0, it.range.first) }
+        a = a.trimEnd('/')
+        val hasScheme = a.startsWith("http://", true) || a.startsWith("https://", true)
+        val hostPart = a.substringAfter("://").substringBefore('/')
+        val hasPort = Regex(":\\d+$").containsMatchIn(hostPart)
+        val path = a.substringAfter("://", a).let { if (it.contains('/')) "/" + it.substringAfter('/') else "" }
+        val host = hostPart
+        val bases = mutableListOf<String>()
+        when {
+            hasScheme && hasPort -> bases += a
+            hasScheme -> {
+                bases += a
+                // Server URL without a port: also try Emby's own default ports.
+                if (a.startsWith("https://", true)) bases += "https://$host:8920$path" else bases += "http://$host:8096$path"
+            }
+            hasPort -> {
+                bases += "http://$host$path"
+                bases += "https://$host$path"
+            }
+            else -> {
+                // A bare name: a domain usually sits behind HTTPS; a local IP usually on port 8096.
+                val looksLocal = Regex("^(\\d+\\.){3}\\d+$").matches(host) || !host.contains('.')
+                if (looksLocal) {
+                    bases += "http://$host:8096$path"
+                    bases += "http://$host$path"
+                } else {
+                    bases += "https://$host$path"
+                    bases += "http://$host:8096$path"
+                    bases += "http://$host$path"
+                    bases += "https://$host:8920$path"
+                }
+            }
         }
+        return bases.flatMap { b -> if (b.endsWith("/emby", true)) listOf(b) else listOf(b, "$b/emby") }.distinct()
+    }
+
+    /** Signs in and remembers the server. Accepts a server URL or an address (see [candidates]). */
+    suspend fun login(address: String, username: String, password: String) {
+        val tries = candidates(address)
+        if (tries.isEmpty()) throw IOException("Enter your server URL")
         val body = JSONObject().put("Username", username).put("Pw", password).put("Password", password)
-        val candidates = if (a.endsWith("/emby")) listOf(a) else listOf(a, "$a/emby")
-        for (base in candidates) {
+        var wrongPassword = false
+        for (base in tries) {
             val res = withContext(Dispatchers.IO) {
                 safe {
                     val req = Request.Builder()
@@ -75,10 +117,15 @@ object Emby {
                         .header("Accept", "application/json")
                         .post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
                         .build()
-                    Http.client.newCall(req).execute().use { r -> r.code to (r.body?.string() ?: "") }
+                    // Short timeouts per try, so a wrong guess doesn't keep you waiting.
+                    Http.client.newBuilder().cache(null)
+                        .connectTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                        .build()
+                        .newCall(req).execute().use { r -> r.code to (r.body?.string() ?: "") }
                 }
             } ?: continue
-            if (res.first == 401) throw IOException("Wrong username or password")
+            if (res.first == 401) { wrongPassword = true; continue }
             if (res.first !in 200..299) continue
             val o = safe { JSONObject(res.second) } ?: continue
             val tok = o.str("AccessToken") ?: continue
@@ -89,8 +136,11 @@ object Emby {
             Store.embyUserName = o.obj("User")?.str("Name") ?: username
             return
         }
-        throw IOException("Couldn't reach an Emby server at $a")
+        if (wrongPassword) throw IOException("Wrong username or password")
+        throw IOException("Couldn't reach an Emby server at ${input(address)}. Check the URL, and that the server is on.")
     }
+
+    private fun input(a: String) = a.trim().ifEmpty { "that address" }
 
     // ---------------------------------------------------------------- images
 

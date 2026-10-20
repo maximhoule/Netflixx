@@ -636,12 +636,13 @@ fun EmbyLoginScreen(model: AppModel) {
                 color = C.Dim, fontSize = 16.sp, lineHeight = 22.sp,
             )
             Spacer(Modifier.height(10.dp))
-            Text("Address example: 192.168.1.20:8096", color = C.Dim, fontSize = 14.sp)
+            Text("Server URL, for example https://emby.yourdomain.com", color = C.Dim, fontSize = 14.sp)
+            Text("or a local address like 192.168.1.20:8096", color = C.Dim, fontSize = 14.sp)
         }
         Column(Modifier.width(420.dp)) {
             OutlinedTextField(
                 value = address, onValueChange = { address = it }, singleLine = true,
-                label = { Text("Server address") }, colors = fieldColors,
+                label = { Text("Server URL") }, colors = fieldColors,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
                 keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Down) }),
                 modifier = Modifier.fillMaxWidth().focusRequester(firstFr),

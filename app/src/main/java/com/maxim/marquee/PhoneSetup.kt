@@ -137,7 +137,7 @@ ${if (result != null) "<div class=\"ok\">${esc(result)}</div>" else ""}
 <label>Email</label><input name="stremio_email" type="email" autocomplete="username">
 <label>Password</label><input name="stremio_password" type="password" autocomplete="current-password"></div>
 <div class="card"><h2>Emby / Jellyfin server</h2>
-<label>Server address (e.g. 192.168.1.20:8096)</label><input name="emby_server" autocapitalize="off">
+<label>Server URL (e.g. https://emby.yourdomain.com or 192.168.1.20:8096)</label><input name="emby_server" type="url" autocapitalize="off" autocorrect="off" spellcheck="false">
 <label>Username</label><input name="emby_user" autocapitalize="off">
 <label>Password</label><input name="emby_password" type="password"></div>
 <div class="card"><h2>Trakt</h2>

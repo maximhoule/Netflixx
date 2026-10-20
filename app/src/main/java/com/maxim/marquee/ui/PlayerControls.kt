@@ -57,7 +57,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.C
+import androidx.media3.common.C as MC
 import androidx.media3.common.Format
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
@@ -178,7 +178,7 @@ private fun subtitleLabel(f: Format): String {
     val parts = mutableListOf<String>()
     parts += languageName(f.language) ?: f.label ?: "Subtitles"
     f.label?.let { l -> if (parts.none { it.equals(l, true) }) parts += l }
-    if (f.selectionFlags and C.SELECTION_FLAG_FORCED != 0) parts += "Forced"
+    if (f.selectionFlags and MC.SELECTION_FLAG_FORCED != 0) parts += "Forced"
     return parts.joinToString(" · ")
 }
 
@@ -444,8 +444,8 @@ private fun AudioSubsPanel(host: PlayerHost, ui: PlayerUiState) {
             if (!g.isTrackSupported(i)) continue
             val f = g.getTrackFormat(i)
             when (g.type) {
-                C.TRACK_TYPE_AUDIO -> audio += TrackOpt(g, i, audioLabel(f), g.isTrackSelected(i))
-                C.TRACK_TYPE_TEXT -> {
+                MC.TRACK_TYPE_AUDIO -> audio += TrackOpt(g, i, audioLabel(f), g.isTrackSelected(i))
+                MC.TRACK_TYPE_TEXT -> {
                     if (g.isTrackSelected(i)) anySubSelected = true
                     subs += TrackOpt(g, i, subtitleLabel(f), g.isTrackSelected(i))
                 }

@@ -21,6 +21,9 @@ class App : Application(), ImageLoaderFactory {
         com.maxim.marquee.data.Http.init(cacheDir)
         // Read saved progress and profiles before the first screen needs them.
         AppScope.launch { Store.warmUp() }
+        // Load the web engine behind the trailer player on a background thread. Done on the main
+        // thread the first time a trailer plays, it freezes the screen for a moment.
+        AppScope.launch { runCatching { android.webkit.WebSettings.getDefaultUserAgent(this@App) } }
     }
 
     override fun newImageLoader(): ImageLoader = ImageLoader.Builder(this)

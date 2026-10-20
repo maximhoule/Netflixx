@@ -223,10 +223,7 @@ class AppModel(private val activity: MainActivity) {
     var myListFocus = -1
 
     private var trailerPlayer by mutableStateOf<TrailerPlayer?>(null)
-    /**
-     * Created on first use, only if background trailers are on. Creating the web player freezes the
-     * screen for a moment, so it only happens once you've rested on a title (never while browsing).
-     */
+    /** Created while Home loads, only if background trailers are on. */
     val trailer: TrailerPlayer get() = trailerPlayer ?: TrailerPlayer(activity).also { trailerPlayer = it }
     /** The trailer player if it already exists (doesn't create it). */
     val trailerIfReady: TrailerPlayer? get() = trailerPlayer
@@ -279,6 +276,9 @@ class AppModel(private val activity: MainActivity) {
             }
             syncing = true
             addonError = null
+            // Set up the trailer player while Home is still loading, not in the middle of browsing.
+            // (Its web engine was already loaded in the background when the app opened.)
+            if (Store.trailerMode != 0) scope.launch { delay(1_200); trailer }
             try {
                 Repo.refreshAddons()
             } catch (e: CancellationException) {

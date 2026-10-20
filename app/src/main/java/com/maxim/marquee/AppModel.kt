@@ -122,11 +122,11 @@ class BrowseState(val type: String?, val withContinue: Boolean, val sportsOnly: 
     var signature = ""
 
     /**
-     * Each row builds its first 8 posters ahead of time, in idle moments while the row above is on
+     * Each row builds its first 4 posters ahead of time, in idle moments while the row above is on
      * screen, so moving down never has to build a whole row at once.
      */
     fun rowState(key: String) = rowStates.getOrPut(key) {
-        LazyListState(prefetchStrategy = androidx.compose.foundation.lazy.LazyListPrefetchStrategy(nestedPrefetchItemCount = 8))
+        LazyListState(prefetchStrategy = androidx.compose.foundation.lazy.LazyListPrefetchStrategy(nestedPrefetchItemCount = 4))
     }
 
     fun firstKey(): String? = rows.firstOrNull { !rowItems[it.key].isNullOrEmpty() }?.let { "${it.key}#0" }

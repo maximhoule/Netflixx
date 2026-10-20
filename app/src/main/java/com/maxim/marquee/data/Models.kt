@@ -129,6 +129,8 @@ data class MetaItem(
     val cast: List<String> = emptyList(),
     val videos: List<Video> = emptyList(),
     val defaultVideoId: String? = null,
+    /** YouTube id of a trailer, when the metadata addon provides one. */
+    val trailer: String? = null,
 ) {
     val isSeries get() = type != "movie" && videos.isNotEmpty()
 
@@ -151,6 +153,8 @@ data class MetaItem(
                 cast = o.arr("cast").strings(),
                 videos = o.arr("videos").objects().mapNotNull { Video.parse(it) },
                 defaultVideoId = o.obj("behaviorHints")?.str("defaultVideoId"),
+                trailer = o.arr("trailerStreams").objects().firstNotNullOfOrNull { it.str("ytId") }
+                    ?: o.arr("trailers").objects().firstOrNull { (it.str("type") ?: "Trailer") == "Trailer" }?.str("source"),
             )
         }
     }
@@ -166,6 +170,59 @@ data class SubTrack(val url: String, val lang: String, val label: String) {
     }
 }
 
+/** What a source's name/description says about it: resolution, HDR, audio, size. */
+data class Quality(val res: Int, val dv: Boolean, val hdr: String?, val badges: List<String>) {
+    /** Dolby Vision without an HDR10 fallback layer: shows wrong colours on TVs without DV. */
+    val dvOnly get() = dv && hdr == null
+
+    companion object {
+        private val SIZE = Regex("""(\d+(?:[.,]\d+)?)\s?(GB|MB|GiB|MiB)""", RegexOption.IGNORE_CASE)
+
+        fun parse(text: String): Quality {
+            val t = text.lowercase()
+            fun has(vararg k: String) = k.any { Regex("(^|[^a-z0-9])" + Regex.escape(it) + "($|[^a-z0-9])").containsMatchIn(t) }
+            val res = when {
+                has("2160p", "4k", "uhd") -> 2160
+                has("1440p", "2k") -> 1440
+                has("1080p", "fhd") -> 1080
+                has("720p") -> 720
+                has("576p", "480p", "sd") -> 480
+                else -> 0
+            }
+            val dv = has("dv", "dovi", "dolby vision", "dolbyvision")
+            val hdr = when {
+                has("hdr10+", "hdr10plus") -> "HDR10+"
+                has("hdr10", "hdr") -> "HDR"
+                has("hlg") -> "HLG"
+                else -> null
+            }
+            val badges = mutableListOf<String>()
+            when (res) {
+                2160 -> badges += "4K"
+                1440 -> badges += "1440p"
+                1080 -> badges += "1080p"
+                720 -> badges += "720p"
+                480 -> badges += "SD"
+            }
+            if (dv) badges += "DV"
+            hdr?.let { badges += it }
+            when {
+                has("atmos") -> badges += "Atmos"
+                has("truehd") -> badges += "TrueHD"
+                has("dts-hd", "dts-x", "dts:x", "dtsx") -> badges += "DTS-HD"
+                has("dts") -> badges += "DTS"
+            }
+            when {
+                has("7.1") -> badges += "7.1"
+                has("5.1") -> badges += "5.1"
+            }
+            if (has("remux")) badges += "REMUX"
+            SIZE.find(text)?.let { badges += it.groupValues[1].replace(',', '.') + " " + it.groupValues[2].uppercase().replace("I", "") }
+            return Quality(res, dv, hdr, badges)
+        }
+    }
+}
+
 data class StreamItem(
     val name: String,
     val title: String,
@@ -173,6 +230,8 @@ data class StreamItem(
     val headers: Map<String, String>,
     val subtitles: List<SubTrack>,
 ) {
+    val quality: Quality by lazy { Quality.parse("$name $title") }
+
     companion object {
         fun parse(o: JSONObject, addonName: String): StreamItem? {
             val url = o.str("url") ?: return null // torrent-only (infoHash) streams need a debrid addon

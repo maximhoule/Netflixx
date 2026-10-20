@@ -47,6 +47,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -155,12 +158,94 @@ fun StreamsScreen(model: AppModel, s: Screen.Streams) {
                                 maxLines = 4, overflow = TextOverflow.Ellipsis,
                             )
                             Spacer(Modifier.width(14.dp))
-                            Text(
-                                st.title, color = if (f) Color(0xFF333333) else C.Dim, fontSize = 13.sp,
-                                lineHeight = 18.sp, maxLines = 5, overflow = TextOverflow.Ellipsis,
-                            )
+                            Column {
+                                val badges = st.quality.badges
+                                if (badges.isNotEmpty()) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(bottom = 4.dp)) {
+                                        badges.forEach { b -> Badge(b, f) }
+                                    }
+                                }
+                                Text(
+                                    st.title, color = if (f) Color(0xFF333333) else C.Dim, fontSize = 13.sp,
+                                    lineHeight = 18.sp, maxLines = 4, overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Badge(text: String, focused: Boolean) {
+    val accent = when (text) {
+        "4K", "DV", "HDR", "HDR10+", "Atmos", "REMUX" -> true
+        else -> false
+    }
+    Text(
+        text,
+        color = when {
+            focused -> Color.White
+            accent -> Color.Black
+            else -> Color.White
+        },
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .background(
+                when {
+                    focused -> Color(0xFF333333)
+                    accent -> Color(0xFFE6E6E6)
+                    else -> Color(0x40FFFFFF)
+                },
+                RoundedCornerShape(3.dp),
+            )
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
+}
+
+// ---------------------------------------------------------------- long-press menu
+
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+fun CardMenuOverlay(model: AppModel) {
+    val m = model.cardMenu ?: return
+    val meta = m.item.meta
+    val firstFr = remember { FocusRequester() }
+    LaunchedEffect(m) {
+        withFrameNanos { }
+        tryFocus(firstFr)
+    }
+    Box(Modifier.fillMaxSize().background(Color(0xCC000000)), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.width(420.dp)
+                .focusProperties { exit = { FocusRequester.Cancel } }
+                .focusGroup()
+                .background(Color(0xFF181818), RoundedCornerShape(10.dp)).padding(24.dp),
+        ) {
+            Text(meta.name, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            m.item.badge?.let { Text(it, color = C.Dim, fontSize = 14.sp) }
+            Spacer(Modifier.height(18.dp))
+            val options = mutableListOf<Pair<String, () -> Unit>>()
+            if (m.item.videoId != null) options += "Resume" to { model.closeCardMenu(); model.resume(m.item) }
+            options += "Details" to { model.closeCardMenu(); model.openDetail(meta) }
+            options += (if (model.inMyList(meta.id)) "Remove from My List" else "Add to My List") to {
+                model.toggleMyList(meta); model.closeCardMenu()
+            }
+            if (m.fromContinue) options += "Remove from Continue Watching" to { model.dismissContinue(m.item); model.closeCardMenu() }
+            options.forEachIndexed { i, (label, action) ->
+                Tile(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                    focusedScale = 1.02f, border = false,
+                    focusRequester = if (i == 0) firstFr else null,
+                    onClick = action,
+                ) { f ->
+                    Text(
+                        label, color = if (f) Color.Black else Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.fillMaxWidth().background(if (f) Color.White else Color(0x1AFFFFFF)).padding(horizontal = 18.dp, vertical = 13.dp),
+                    )
                 }
             }
         }
@@ -243,9 +328,10 @@ fun SearchScreen(model: AppModel) {
                 modifier = Modifier.padding(start = 4.dp, bottom = 14.dp),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                KeyTile("🎤", Modifier.width(52.dp)) { model.voiceSearch() }
                 KeyTile("SPACE", Modifier.weight(1f)) { query += " " }
                 KeyTile("⌫", Modifier.width(64.dp)) { query = query.dropLast(1) }
-                KeyTile("CLEAR", Modifier.width(80.dp)) { query = "" }
+                KeyTile("CLEAR", Modifier.width(70.dp)) { query = "" }
             }
             Spacer(Modifier.height(6.dp))
             LazyVerticalGrid(
@@ -373,6 +459,26 @@ fun SettingsScreen(model: AppModel) {
             val langs = Store.subtitleLanguages
             val i = langs.indexOfFirst { it.first == Store.subLang }
             Store.subLang = langs[(i + 1) % langs.size].first; version++
+        }
+        SettingRow(
+            "Max quality",
+            when (Store.maxQuality) { 2160 -> "4K"; 1080 -> "1080p"; 720 -> "720p"; else -> "Best available" },
+            "Caps the source picked automatically; lower it if your connection or box struggles",
+        ) {
+            val opts = listOf(0, 2160, 1080, 720)
+            Store.maxQuality = opts[(opts.indexOf(Store.maxQuality).coerceAtLeast(0) + 1) % opts.size]; version++
+        }
+        SettingRow("Skip intros automatically", onOff(Store.autoSkipIntro), "Otherwise a Skip Intro button appears (IntroDB data)") {
+            Store.autoSkipIntro = !Store.autoSkipIntro; version++
+        }
+        SettingRow("Match frame rate", onOff(Store.matchFrameRate), "Switches the TV to 24p/25p/etc. for smoother motion") {
+            Store.matchFrameRate = !Store.matchFrameRate; version++
+        }
+        SettingRow("Subtitle size", listOf("Small", "Medium", "Large", "Extra large")[Store.subSize.coerceIn(0, 3)]) {
+            Store.subSize = (Store.subSize + 1) % 4; version++
+        }
+        SettingRow("Subtitle style", if (Store.subStyle == 1) "On a dark box" else "White with shadow") {
+            Store.subStyle = (Store.subStyle + 1) % 2; version++
         }
         SettingRow("Player", if (Store.externalPlayer) "External app" else "Built-in", "External sends videos to VLC, Just Player, MX Player…") {
             Store.externalPlayer = !Store.externalPlayer; version++

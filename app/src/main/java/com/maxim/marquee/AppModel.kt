@@ -40,7 +40,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.coroutineContext
 
 enum class Tab(val label: String, val icon: ImageVector) {
     SEARCH("Search", Icons.Filled.Search),
@@ -59,7 +61,10 @@ data class PlayReq(
     val poster: String?,
     val background: String?,
     val episode: String? = null,
+    val startOver: Boolean = false,
 )
+
+data class CardMenu(val item: CardItem, val browse: BrowseState?, val fromContinue: Boolean)
 
 sealed class Screen {
     data class Detail(val type: String, val id: String, val preview: MetaItem) : Screen()
@@ -120,6 +125,9 @@ class AppModel(private val activity: MainActivity) {
     var addonCount by mutableIntStateOf(0)
     var syncing by mutableStateOf(false)
     var railFocused = false
+    var cardMenu by mutableStateOf<CardMenu?>(null)
+    /** Whether the TV can show Dolby Vision; DV-only sources are avoided when it can't. */
+    var supportsDV = false
     var handledTick = 0
 
     val browse = mapOf(
@@ -145,6 +153,7 @@ class AppModel(private val activity: MainActivity) {
         val attempts: Int,
         val addonSubs: List<SubTrack>,
         val external: Boolean = false,
+        val autoChain: Int = 0,
     )
 
     fun toast(msg: String) = Toast.makeText(activity, msg, Toast.LENGTH_SHORT).show()
@@ -332,15 +341,17 @@ class AppModel(private val activity: MainActivity) {
         }
         return cands.groupBy { it.metaId }
             .mapNotNull { (_, list) -> list.maxByOrNull { it.time } }
-            .filter { c -> !c.hidden && c.pos > 5_000 && (c.dur <= 0 || c.pos < c.dur * 0.95) }
+            .filter { c -> !c.hidden && (c.pos == 1L || c.pos > 5_000) && (c.dur <= 0 || c.pos < c.dur * 0.95) }
             .sortedByDescending { it.time }
             .take(30)
             .map { c ->
                 CardItem(
                     meta = MetaItem(id = c.metaId, type = c.type, name = c.name, poster = c.poster),
                     videoId = c.videoId,
-                    progress = if (c.dur > 0) c.pos.toFloat() / c.dur else null,
-                    badge = if (c.type == "series") episodeLabel(c.videoId) else null,
+                    progress = if (c.dur > 0 && c.pos > 1) c.pos.toFloat() / c.dur else null,
+                    badge = if (c.type == "series") {
+                        episodeLabel(c.videoId)?.let { if (c.pos == 1L) "NEXT · $it" else it }
+                    } else null,
                 )
             }
     }
@@ -381,6 +392,7 @@ class AppModel(private val activity: MainActivity) {
     }
 
     private fun resumeMs(req: PlayReq): Long {
+        if (req.startOver) return 0
         val (pos, dur) = positionOf(req.metaId, req.videoId) ?: return 0
         if (pos < 10_000 || (dur > 0 && pos >= dur * 0.95)) return 0
         return (pos - 3_000).coerceAtLeast(0)
@@ -444,7 +456,20 @@ class AppModel(private val activity: MainActivity) {
         }
     }
 
-    fun play(req: PlayReq, chooseSource: Boolean = false) {
+    /** Puts the sources the TV handles best first (respecting the max-quality setting). */
+    private fun rank(streams: List<StreamItem>): List<StreamItem> {
+        val cap = Store.maxQuality
+        fun ok(s: StreamItem): Boolean {
+            val q = s.quality
+            if (cap > 0 && q.res > cap) return false
+            if (q.dvOnly && !supportsDV) return false
+            return true
+        }
+        val (good, rest) = streams.partition { ok(it) }
+        return good + rest
+    }
+
+    fun play(req: PlayReq, chooseSource: Boolean = false, autoChain: Int = 0) {
         if (chooseSource || !Store.autoplay) {
             stack.add(Screen.Streams(req)); return
         }
@@ -453,7 +478,7 @@ class AppModel(private val activity: MainActivity) {
         playJob = scope.launch {
             val subs = async { withTimeoutOrNull(6_000) { Repo.subtitles(req.type, req.videoId) } ?: emptyList() }
             val streams = try {
-                Repo.allStreams(req.type, req.videoId)
+                rank(Repo.allStreams(req.type, req.videoId))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -466,7 +491,7 @@ class AppModel(private val activity: MainActivity) {
                 stack.add(Screen.Streams(req))
                 return@launch
             }
-            launchStream(Pending(req, streams, 0, auto = true, attempts = 1, addonSubs = subs.await()))
+            launchStream(Pending(req, streams, 0, auto = true, attempts = 1, addonSubs = subs.await(), autoChain = autoChain))
         }
     }
 
@@ -484,13 +509,19 @@ class AppModel(private val activity: MainActivity) {
         loading = null
     }
 
-    private fun launchStream(p: Pending) {
+    private suspend fun launchStream(p: Pending) {
         val s = p.streams[p.index]
         val subs = (s.subtitles + p.addonSubs)
             .filter { Store.wantsSubtitle(it.lang) }
             .distinctBy { it.url }
             .take(12)
         val start = resumeMs(p.req)
+        // Episode list + next episode for the player's Episodes panel and "Next Episode" card.
+        val meta = if (p.req.type == "series") Repo.meta(p.req.type, p.req.metaId) else null
+        val current = meta?.videos?.firstOrNull { it.id == p.req.videoId }
+        val next = meta?.let { nextVideo(it, p.req.videoId) }
+        val season = meta?.let { m -> sortedEpisodes(m).filter { it.season == (current?.season ?: it.season) } } ?: emptyList()
+        if (!coroutineContext.isActive) return
         loading = null
         if (Store.externalPlayer) {
             pending = p.copy(external = true)
@@ -511,13 +542,20 @@ class AppModel(private val activity: MainActivity) {
             return
         }
         pending = p
-        activity.playerLauncher.launch(PlayerActivity.intent(activity, p.req, s, subs, start))
+        activity.playerLauncher.launch(PlayerActivity.intent(activity, p.req, s, subs, start, next, season, p.autoChain))
+    }
+
+    /** After an episode finishes, Continue Watching points at the next one ("Up Next"). */
+    private fun markUpNext(req: PlayReq, next: Video) {
+        Store.saveProgress(LocalProgress(req.metaId, req.type, req.name, req.poster, next.id, 1, 0, System.currentTimeMillis()))
     }
 
     fun onPlayerResult(data: Intent?) {
         val p = pending ?: return
         pending = null
         var outcome = data?.getStringExtra("outcome") ?: "exit"
+        val outcomeVideo = data?.getStringExtra("videoId")
+        val auto = data?.getBooleanExtra("auto", false) ?: false
 
         if (p.external) {
             val pos = data?.getIntExtra("position", -1) ?: -1
@@ -535,26 +573,108 @@ class AppModel(private val activity: MainActivity) {
             if (data?.getStringExtra("end_by") == "playback_completion") outcome = "ended"
         }
 
-        refreshContinue()
-        scope.launch { delay(1500); loadLibrary() }
+        scope.launch {
+            // Finished an episode? Line up the next one in Continue Watching.
+            if (p.req.type == "series" && (outcome == "ended" || outcome == "next" || watched(p.req.metaId, p.req.videoId))) {
+                Repo.meta(p.req.type, p.req.metaId)?.let { m -> nextVideo(m, p.req.videoId)?.let { markUpNext(p.req, it) } }
+            }
+            refreshContinue()
+            delay(1500)
+            loadLibrary()
+        }
 
         when (outcome) {
             "error" -> {
                 if (p.auto && p.index + 1 < p.streams.size && p.attempts < 5) {
                     toast("That source didn't work — trying the next one")
                     loading = p.req
-                    launchStream(p.copy(index = p.index + 1, attempts = p.attempts + 1))
+                    playJob = scope.launch { launchStream(p.copy(index = p.index + 1, attempts = p.attempts + 1)) }
                 } else {
                     toast("Couldn't play this source")
                     if (stack.lastOrNull() !is Screen.Streams) stack.add(Screen.Streams(p.req))
                 }
             }
-            "ended" -> if (Store.autoNext && p.req.type == "series") {
+            "next", "episode" -> scope.launch {
+                val meta = Repo.meta(p.req.type, p.req.metaId) ?: return@launch
+                val target = outcomeVideo?.let { id -> meta.videos.firstOrNull { it.id == id } }
+                    ?: nextVideo(meta, p.req.videoId) ?: return@launch
+                play(reqFor(meta, target), autoChain = if (outcome == "next" && auto) p.autoChain + 1 else 0)
+            }
+            "ended" -> if (Store.autoNext && p.req.type == "series" && p.external) {
                 scope.launch {
                     val meta = Repo.meta(p.req.type, p.req.metaId) ?: return@launch
                     val next = nextVideo(meta, p.req.videoId) ?: return@launch
                     play(reqFor(meta, next))
                 }
+            }
+        }
+    }
+
+    // ---------------- My List / Continue Watching management ----------------
+
+    fun inMyList(metaId: String): Boolean = library.any { it.id == metaId && it.inMyList }
+
+    fun toggleMyList(meta: MetaItem) {
+        val add = !inMyList(meta.id)
+        // Optimistic update so the button flips immediately.
+        val now = System.currentTimeMillis()
+        val existing = library.firstOrNull { it.id == meta.id }
+        library = if (existing != null) {
+            library.map { if (it.id == meta.id) it.copy(removed = !add, temp = false, mtime = now) else it }
+        } else if (add) {
+            library + LibEntry(meta.id, meta.type, meta.name, meta.poster, false, false, now, 0, null, 0, 0)
+        } else library
+        toast(if (add) "Added to My List" else "Removed from My List")
+        scope.launch {
+            if (!Repo.setInLibrary(meta, add)) toast("Couldn't update your Stremio library")
+            delay(800)
+            loadLibrary()
+        }
+    }
+
+    fun dismissContinue(item: CardItem) {
+        Store.dismiss(item.meta.id)
+        library = library.map { if (it.id == item.meta.id) it.copy(timeOffset = 0) else it }
+        refreshContinue()
+        scope.launch { Repo.rewind(item.meta.id) }
+    }
+
+    fun openCardMenu(b: BrowseState?, item: CardItem, fromContinue: Boolean) {
+        cardMenu = CardMenu(item, b, fromContinue)
+    }
+
+    fun closeCardMenu() {
+        val m = cardMenu ?: return
+        cardMenu = null
+        m.browse?.let { b -> b.pendingFocusKey = b.lastFocusKey }
+    }
+
+    fun voiceSearch() {
+        val i = Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            .putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, "Search movies and shows")
+        try {
+            activity.voiceLauncher.launch(i)
+        } catch (e: ActivityNotFoundException) {
+            toast("Voice search isn't available on this device")
+        }
+    }
+
+    fun onVoiceResult(data: Intent?) {
+        val text = data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull() ?: return
+        searchQuery = text
+    }
+
+    fun playTrailer(ytId: String) {
+        val app = Intent(Intent.ACTION_VIEW, Uri.parse("vnd.youtube:$ytId"))
+        val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=$ytId"))
+        try {
+            activity.startActivity(app)
+        } catch (e: ActivityNotFoundException) {
+            try {
+                activity.startActivity(web)
+            } catch (e2: ActivityNotFoundException) {
+                toast("Install YouTube to watch trailers")
             }
         }
     }

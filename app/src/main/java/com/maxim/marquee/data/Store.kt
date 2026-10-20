@@ -65,6 +65,34 @@ object Store {
         get() = bool("externalPlayer", false)
         set(v) = setBool("externalPlayer", v)
 
+    /** 0 = best available, otherwise the highest vertical resolution to auto-pick (2160/1080/720). */
+    var maxQuality: Int
+        get() = prefs.getInt("maxQuality", 0)
+        set(v) = prefs.edit().putInt("maxQuality", v).apply()
+
+    var autoSkipIntro: Boolean
+        get() = bool("autoSkipIntro", false)
+        set(v) = setBool("autoSkipIntro", v)
+
+    var matchFrameRate: Boolean
+        get() = bool("matchFrameRate", false)
+        set(v) = setBool("matchFrameRate", v)
+
+    /** 0 small, 1 medium, 2 large, 3 extra large */
+    var subSize: Int
+        get() = prefs.getInt("subSize", 1)
+        set(v) = prefs.edit().putInt("subSize", v).apply()
+
+    /** 0 = white with shadow (Netflix), 1 = on a dark box */
+    var subStyle: Int
+        get() = prefs.getInt("subStyle", 0)
+        set(v) = prefs.edit().putInt("subStyle", v).apply()
+
+    /** Last audio language picked in the player; becomes the default. */
+    var audioLang: String?
+        get() = string("audioLang")
+        set(v) = setString("audioLang", v)
+
     fun signOut() {
         prefs.edit().remove("authKey").remove("addons").apply()
     }
@@ -106,6 +134,14 @@ object Store {
             duration = o.optLong("duration"),
             updated = o.optLong("updated"),
         )
+    }
+
+    /** Forget local progress for a title (used by "Remove from Continue Watching"). */
+    fun dismiss(metaId: String) = synchronized(lock) {
+        val all = progressJson()
+        val ids = all.keys().asSequence().toList().filter { all.optJSONObject(it)?.optString("metaId") == metaId }
+        ids.forEach { all.remove(it) }
+        prefs.edit().putString("progress", all.toString()).apply()
     }
 
     fun progress(videoId: String): LocalProgress? = synchronized(lock) {

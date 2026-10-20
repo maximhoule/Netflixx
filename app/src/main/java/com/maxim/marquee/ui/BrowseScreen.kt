@@ -272,6 +272,7 @@ fun CatalogRow(
                                 model.onCardFocus(b, key, item)
                                 if (i >= items.size - 6) model.loadMore(b, row)
                             },
+                            onLongClick = { model.openCardMenu(b, item, row.source is RowSource.Continue) },
                             onClick = {
                                 when {
                                     onClick != null -> onClick(item)

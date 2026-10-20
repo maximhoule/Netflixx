@@ -101,25 +101,46 @@ object Store {
 
     private val lock = Any()
 
-    private fun progressJson(): JSONObject =
-        safe { JSONObject(prefs.getString("progress", null) ?: "{}") } ?: JSONObject()
+    /** In-memory copy so lookups (one per episode tile) never touch disk. */
+    private var cache: LinkedHashMap<String, LocalProgress>? = null
 
-    fun saveProgress(p: LocalProgress) = synchronized(lock) {
-        val all = progressJson()
-        all.put(
-            p.videoId,
-            JSONObject()
-                .put("metaId", p.metaId).put("type", p.type).put("name", p.name)
-                .put("poster", p.poster ?: JSONObject.NULL)
-                .put("position", p.position).put("duration", p.duration).put("updated", p.updated),
-        )
-        if (all.length() > 400) {
-            val oldest = all.keys().asSequence().toList()
-                .sortedBy { all.optJSONObject(it)?.optLong("updated") ?: 0 }
-                .take(all.length() - 400)
-            oldest.forEach { all.remove(it) }
+    private fun loaded(): LinkedHashMap<String, LocalProgress> {
+        cache?.let { return it }
+        val map = LinkedHashMap<String, LocalProgress>()
+        val all = safe { JSONObject(prefs.getString("progress", null) ?: "{}") } ?: JSONObject()
+        all.keys().forEach { id -> parseProgress(id, all.optJSONObject(id))?.let { map[id] = it } }
+        cache = map
+        return map
+    }
+
+    private fun persist(map: Map<String, LocalProgress>) {
+        val all = JSONObject()
+        map.values.forEach { p ->
+            all.put(
+                p.videoId,
+                JSONObject()
+                    .put("metaId", p.metaId).put("type", p.type).put("name", p.name)
+                    .put("poster", p.poster ?: JSONObject.NULL)
+                    .put("position", p.position).put("duration", p.duration).put("updated", p.updated),
+            )
         }
         prefs.edit().putString("progress", all.toString()).apply()
+    }
+
+    fun saveProgress(p: LocalProgress) = synchronized(lock) {
+        val map = loaded()
+        map[p.videoId] = p
+        if (map.size > 400) {
+            map.values.sortedBy { it.updated }.take(map.size - 400).forEach { map.remove(it.videoId) }
+        }
+        persist(map)
+    }
+
+    /** Forget local progress for a title (used by "Remove from Continue Watching"). */
+    fun dismiss(metaId: String) = synchronized(lock) {
+        val map = loaded()
+        map.values.filter { it.metaId == metaId }.map { it.videoId }.forEach { map.remove(it) }
+        persist(map)
     }
 
     private fun parseProgress(videoId: String, o: JSONObject?): LocalProgress? {
@@ -136,22 +157,9 @@ object Store {
         )
     }
 
-    /** Forget local progress for a title (used by "Remove from Continue Watching"). */
-    fun dismiss(metaId: String) = synchronized(lock) {
-        val all = progressJson()
-        val ids = all.keys().asSequence().toList().filter { all.optJSONObject(it)?.optString("metaId") == metaId }
-        ids.forEach { all.remove(it) }
-        prefs.edit().putString("progress", all.toString()).apply()
-    }
+    fun progress(videoId: String): LocalProgress? = synchronized(lock) { loaded()[videoId] }
 
-    fun progress(videoId: String): LocalProgress? = synchronized(lock) {
-        parseProgress(videoId, progressJson().optJSONObject(videoId))
-    }
-
-    fun allProgress(): List<LocalProgress> = synchronized(lock) {
-        val all = progressJson()
-        all.keys().asSequence().mapNotNull { parseProgress(it, all.optJSONObject(it)) }.toList()
-    }
+    fun allProgress(): List<LocalProgress> = synchronized(lock) { loaded().values.toList() }
 
     // ---- subtitle language matching ----
 

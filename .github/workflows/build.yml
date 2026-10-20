@@ -34,6 +34,8 @@ jobs:
         if: failure()
         run: |
           { grep -E "^e: " build.log; grep -E -A6 "What went wrong" build.log; } | head -200 > errors.txt || true
+          grep -E "Missing class|R8:|ERROR:" build.log | head -60 >> errors.txt || true
+          cat app/build/outputs/mapping/release/missing_rules.txt >> errors.txt 2>/dev/null || true
           [ -s errors.txt ] || tail -60 build.log > errors.txt
           split -l 20 errors.txt part_
           for f in part_*; do

@@ -20,7 +20,9 @@ class App : Application(), ImageLoaderFactory {
     }
 
     override fun newImageLoader(): ImageLoader = ImageLoader.Builder(this)
-        .crossfade(true)
+        .crossfade(160)
+        .allowRgb565(true)
+        .respectCacheHeaders(false)
         .memoryCache { MemoryCache.Builder(this).maxSizePercent(0.2).build() }
         .diskCache { DiskCache.Builder().directory(cacheDir.resolve("images")).maxSizeBytes(250L * 1024 * 1024).build() }
         .build()

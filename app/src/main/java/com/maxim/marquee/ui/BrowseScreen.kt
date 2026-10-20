@@ -1,6 +1,7 @@
 package com.maxim.marquee.ui
 
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
@@ -73,7 +74,7 @@ fun MainShell(model: AppModel, railRequesters: Map<Tab, FocusRequester>) {
 @Composable
 fun Rail(model: AppModel, requesters: Map<Tab, FocusRequester>) {
     var expanded by remember { mutableStateOf(false) }
-    val width by animateDpAsState(if (expanded) 230.dp else RAIL, label = "railWidth")
+    val width by animateDpAsState(if (expanded) 230.dp else RAIL, tween(140), label = "railWidth")
     Box(Modifier.fillMaxHeight()) {
         if (expanded) {
             Box(

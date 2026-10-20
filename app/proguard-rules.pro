@@ -13,10 +13,15 @@
 # Keep readable stack traces.
 -keepattributes SourceFile,LineNumberTable
 
-# Trailer WebView bridge (called from JavaScript).
--keepclassmembers class * {
-    @android.webkit.JavascriptInterface <methods>;
-}
+# NewPipe Extractor (YouTube trailer streams). Only its plain player request is used, so the
+# JavaScript engine it can load for other features is allowed to be stripped.
+-dontwarn org.mozilla.javascript.**
+-dontwarn org.mozilla.classfile.**
+-dontwarn java.beans.**
+-dontwarn javax.script.**
+-dontwarn jdk.dynalink.**
+-dontwarn javax.annotation.**
+-dontwarn com.google.re2j.**
 
 # Our own classes keep their names (still optimised and shrunk) so the baseline profile in
 # src/main/baseline-prof.txt matches them after R8.

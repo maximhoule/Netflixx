@@ -41,6 +41,8 @@ android {
     }
 
     compileOptions {
+        // NewPipe Extractor uses newer Java APIs than Android 6–12 ship.
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -91,4 +93,9 @@ dependencies {
     // Software decoders for DTS / TrueHD / E-AC3 audio that most TV boxes can't decode natively.
     // Must match the media3 version above (Jellyfin publishes one build per media3 release).
     implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.5.0+1")
+
+    // Direct YouTube streams for the trailers behind the billboard (played by Media3, no web page).
+    implementation("com.github.teamnewpipe:NewPipeExtractor:v0.26.5")
+    implementation("com.github.TeamNewPipe:nanojson:e9d656ddb49a412a5a0a5d5ef20ca7ef09549996")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.4")
 }

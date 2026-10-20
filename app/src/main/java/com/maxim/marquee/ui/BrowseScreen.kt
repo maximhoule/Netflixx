@@ -234,7 +234,10 @@ private fun HeroBackdrop(model: AppModel, b: BrowseState, modifier: Modifier) {
         if (!trailersOn) return@LaunchedEffect
         model.stopTrailer()
         if (ids.isEmpty()) return@LaunchedEffect
-        delay(2_200)
+        // Look the stream up while you're still deciding, so it starts right on time.
+        delay(700)
+        model.trailer.prefetch(ids)
+        delay(1_500)
         model.trailer.play(ids, muted = Store.trailerMode == 1)
     }
     DisposableEffect(Unit) { onDispose { model.stopTrailer() } }
@@ -271,12 +274,12 @@ private fun BoxScope.HeroInfo(model: AppModel, b: BrowseState) {
 @Composable
 private fun TrailerLayer(model: AppModel) {
     val tp = model.trailerIfReady ?: return
-    val web = tp.view ?: return
+    val video = tp.view ?: return
     val alpha by animateFloatAsState(if (tp.playing) 1f else 0f, tween(if (tp.playing) 800 else 200), label = "trailerAlpha")
     AndroidView(
         factory = {
-            (web.parent as? ViewGroup)?.removeView(web)
-            web
+            (video.parent as? ViewGroup)?.removeView(video)
+            video
         },
         modifier = Modifier.fillMaxSize().alpha(alpha),
     )

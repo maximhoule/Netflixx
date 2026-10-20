@@ -70,12 +70,15 @@ data class CardMenu(val item: CardItem, val browse: BrowseState?, val fromContin
 sealed class Screen {
     data class Detail(val type: String, val id: String, val preview: MetaItem) : Screen()
     data class Streams(val req: PlayReq) : Screen()
+    data object EmbyLogin : Screen()
 }
 
 sealed class RowSource {
     data object Continue : RowSource()
     data class Cat(val addon: Addon, val catalog: Catalog) : RowSource()
     data object Static : RowSource()
+    /** kind: "resume", "nextup" or "latest" (with a library id). */
+    data class Emby(val kind: String, val libraryId: String? = null) : RowSource()
 }
 
 data class RowModel(val key: String, val title: String, val source: RowSource)
@@ -125,6 +128,7 @@ class AppModel(private val activity: MainActivity) {
     var contentFocusTick by mutableIntStateOf(0)
     var addonCount by mutableIntStateOf(0)
     var syncing by mutableStateOf(false)
+    var embyLibraries by mutableStateOf<List<com.maxim.marquee.data.Emby.Library>>(emptyList())
     var railFocused = false
     var cardMenu by mutableStateOf<CardMenu?>(null)
     /** Whether the TV can show Dolby Vision; DV-only sources are avoided when it can't. */
@@ -187,10 +191,37 @@ class AppModel(private val activity: MainActivity) {
                 if (Repo.addons.isEmpty()) toast("Couldn't load your addons: ${e.message}")
             }
             addonCount = Repo.addons.size
+            loadEmbyLibraries()
             rebuildRows()
             loadLibrary()
             syncing = false
         }
+    }
+
+    private suspend fun loadEmbyLibraries() {
+        embyLibraries = if (com.maxim.marquee.data.Emby.connected) com.maxim.marquee.data.Emby.libraries() else emptyList()
+    }
+
+    fun embyLogin(address: String, user: String, password: String, onError: (String) -> Unit) {
+        scope.launch {
+            try {
+                com.maxim.marquee.data.Emby.login(address, user, password)
+                loadEmbyLibraries()
+                rebuildRows(force = true)
+                toast("Connected to Emby")
+                back()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onError(e.message ?: "Couldn't connect")
+            }
+        }
+    }
+
+    fun embySignOut() {
+        Store.embySignOut()
+        embyLibraries = emptyList()
+        rebuildRows(force = true)
     }
 
     fun login(email: String, password: String, onError: (String) -> Unit) {
@@ -236,6 +267,14 @@ class AppModel(private val activity: MainActivity) {
         lastLibraryLoad = System.currentTimeMillis()
         library = Repo.library()
         refreshContinue()
+        if (com.maxim.marquee.data.Emby.connected) {
+            val resume = com.maxim.marquee.data.Emby.resume()
+            val next = com.maxim.marquee.data.Emby.nextUp()
+            browse.values.filter { it.withContinue }.forEach { b ->
+                if (b.rows.any { it.key == "emby-resume" }) { b.rowItems["emby-resume"] = resume; b.loaded["emby-resume"] = true }
+                if (b.rows.any { it.key == "emby-nextup" }) { b.rowItems["emby-nextup"] = next; b.loaded["emby-nextup"] = true }
+            }
+        }
     }
 
     // ---------------- browse rows ----------------
@@ -247,12 +286,27 @@ class AppModel(private val activity: MainActivity) {
         return "$n ${typeLabel(c.type)}"
     }
 
-    private fun rebuildRows() {
-        val sig = Repo.signature
+    private fun rebuildRows(force: Boolean = false) {
+        val sig = Repo.signature + "|" + embyLibraries.joinToString(",") { it.id }
         browse.values.forEach { b ->
-            if (b.signature == sig && b.rows.isNotEmpty()) return@forEach
+            if (!force && b.signature == sig && b.rows.isNotEmpty()) return@forEach
             val defs = mutableListOf<RowModel>()
             if (b.withContinue) defs += RowModel("continue", "Continue Watching", RowSource.Continue)
+            if (com.maxim.marquee.data.Emby.connected) {
+                if (b.withContinue) {
+                    defs += RowModel("emby-resume", "Continue Watching on Emby", RowSource.Emby("resume"))
+                    defs += RowModel("emby-nextup", "Next Up on Emby", RowSource.Emby("nextup"))
+                }
+                embyLibraries.filter { lib ->
+                    when (b.type) {
+                        "series" -> lib.type == "tvshows"
+                        "movie" -> lib.type == "movies"
+                        else -> true
+                    }
+                }.forEach { lib ->
+                    defs += RowModel("emby-latest-${lib.id}", "New in ${lib.name}", RowSource.Emby("latest", lib.id))
+                }
+            }
             Repo.boardCatalogs(b.type).forEachIndexed { i, (a, c) ->
                 defs += RowModel("${a.transportUrl.hashCode()}|${c.type}|${c.id}|$i", rowTitle(c), RowSource.Cat(a, c))
             }
@@ -272,6 +326,18 @@ class AppModel(private val activity: MainActivity) {
                 b.rowItems[row.key] = continueItems(); b.loaded[row.key] = true; afterRowLoaded(b)
             }
             is RowSource.Static -> b.loaded[row.key] = true
+            is RowSource.Emby -> {
+                scope.launch {
+                    val items = when (src.kind) {
+                        "resume" -> com.maxim.marquee.data.Emby.resume()
+                        "nextup" -> com.maxim.marquee.data.Emby.nextUp()
+                        else -> src.libraryId?.let { com.maxim.marquee.data.Emby.latest(it) } ?: emptyList()
+                    }
+                    b.rowItems[row.key] = items
+                    b.loaded[row.key] = true
+                    afterRowLoaded(b)
+                }
+            }
             is RowSource.Cat -> {
                 scope.launch {
                     val items = Repo.catalog(src.addon, src.catalog).distinctBy { it.id }.map { CardItem(it) }
@@ -379,7 +445,7 @@ class AppModel(private val activity: MainActivity) {
             }
         }
         val inLibrary = library.associateBy { it.id }
-        Store.allProgress().groupBy { it.metaId }.forEach { (metaId, list) ->
+        Store.allProgress().filterNot { com.maxim.marquee.data.Emby.isEmby(it.metaId) }.groupBy { it.metaId }.forEach { (metaId, list) ->
             val p = list.maxByOrNull { it.updated } ?: return@forEach
             val lib = inLibrary[metaId]
             val libTime = lib?.let { maxOf(it.mtime, it.lastWatched) } ?: -1
@@ -419,6 +485,11 @@ class AppModel(private val activity: MainActivity) {
     /** (position, duration) for a specific video, newest of local vs library. */
     private fun positionOf(metaId: String, videoId: String): Pair<Long, Long>? {
         val local = Store.progress(videoId)
+        if (local == null && com.maxim.marquee.data.Emby.isEmby(videoId)) {
+            com.maxim.marquee.data.Emby.userData[videoId]?.let { u ->
+                return if (u.played && u.position <= 0) u.duration to u.duration else u.position to u.duration
+            }
+        }
         val lib = library.firstOrNull { it.id == metaId && (it.videoId ?: it.id) == videoId }
         val localTime = local?.updated ?: -1
         val libTime = lib?.lastWatched ?: -1

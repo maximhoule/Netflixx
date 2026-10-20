@@ -135,6 +135,9 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         isForeground = true
+        // Remote mode, always: in "touch mode" Android ignores focus requests, so nothing would be
+        // highlighted until the first key press.
+        window.decorView.post { if (window.decorView.isInTouchMode) window.decorView.requestFocusFromTouch() }
         model.resumeTrailer()
         model.onResume()
         model.checkForUpdate()

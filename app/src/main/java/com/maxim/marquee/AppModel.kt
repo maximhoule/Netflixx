@@ -339,9 +339,9 @@ class AppModel(private val activity: MainActivity) {
             is RowSource.Static -> b.loaded[row.key] = true
             is RowSource.Emby -> {
                 scope.launch {
-                    val items = when (src.kind) {
-                        "resume" -> com.maxim.marquee.data.Emby.resume()
-                        "nextup" -> com.maxim.marquee.data.Emby.nextUp()
+                    val items: List<CardItem> = when (src.kind) {
+                        "resume" -> com.maxim.marquee.data.Emby.resume().map { it.card }
+                        "nextup" -> com.maxim.marquee.data.Emby.nextUp().map { it.card }
                         else -> src.libraryId?.let { com.maxim.marquee.data.Emby.latest(it) } ?: emptyList()
                     }
                     b.rowItems[row.key] = items

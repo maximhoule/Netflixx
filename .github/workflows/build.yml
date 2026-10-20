@@ -3,6 +3,10 @@ name: Build APK
 on:
   push:
     branches: [main]
+    # Test tooling changes don't need a new app release.
+    paths-ignore:
+      - ".github/workflows/emulator.yml"
+      - ".github/scripts/**"
   workflow_dispatch:
 
 permissions:

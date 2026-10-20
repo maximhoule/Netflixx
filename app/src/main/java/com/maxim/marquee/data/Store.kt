@@ -88,6 +88,11 @@ object Store {
         get() = prefs.getInt("subStyle", 0)
         set(v) = prefs.edit().putInt("subStyle", v).apply()
 
+    /** Background trailers on the home billboard: 0 off, 1 muted, 2 with sound. */
+    var trailerMode: Int
+        get() = prefs.getInt("trailerMode", 1)
+        set(v) = prefs.edit().putInt("trailerMode", v).apply()
+
     /** Last audio language picked in the player; becomes the default. */
     var audioLang: String?
         get() = string("audioLang")

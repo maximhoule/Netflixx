@@ -141,6 +141,13 @@ class AppModel(private val activity: MainActivity) {
     val myListGrid = LazyGridState()
     var myListFocus = -1
 
+    private var trailerPlayer: TrailerPlayer? = null
+    /** Created on first use, only if background trailers are enabled. */
+    val trailer: TrailerPlayer get() = trailerPlayer ?: TrailerPlayer(activity).also { trailerPlayer = it }
+    fun pauseTrailer() = trailerPlayer?.onPause()
+    fun resumeTrailer() = trailerPlayer?.onResume()
+    fun stopTrailer() = trailerPlayer?.stop()
+
     private var playJob: Job? = null
     private var pending: Pending? = null
     private var lastLibraryLoad = 0L
@@ -205,8 +212,19 @@ class AppModel(private val activity: MainActivity) {
         loggedIn = false
     }
 
+    private var poller: Job? = null
+
     fun onResume() {
-        if (loggedIn && System.currentTimeMillis() - lastLibraryLoad > 60_000) scope.launch { loadLibrary() }
+        if (loggedIn && System.currentTimeMillis() - lastLibraryLoad > 15_000) scope.launch { loadLibrary() }
+        // Keep Continue Watching in step with other devices while the app is open.
+        if (poller == null) {
+            poller = scope.launch {
+                while (true) {
+                    delay(120_000)
+                    if (loggedIn && activity.isForeground) loadLibrary()
+                }
+            }
+        }
     }
 
     private suspend fun loadLibrary() {
@@ -331,30 +349,46 @@ class AppModel(private val activity: MainActivity) {
 
     private data class Cand(
         val metaId: String, val type: String, val name: String, val poster: String?,
-        val videoId: String, val pos: Long, val dur: Long, val time: Long, val hidden: Boolean,
+        val videoId: String, val pos: Long, val dur: Long, val time: Long,
     )
 
+    /**
+     * Same rule as Stremio's own Continue Watching: anything in the library with progress
+     * (type != other, not removed unless temporary, offset > 0), newest change first.
+     * Titles watched only in this app are merged in from local progress.
+     */
     fun continueItems(): List<CardItem> {
-        val cands = mutableListOf<Cand>()
-        library.filter { it.type != "other" && it.lastWatched > 0 }.forEach { e ->
-            cands += Cand(
-                e.id, e.type, e.name, e.poster, e.videoId ?: e.id, e.timeOffset, e.duration, e.lastWatched,
-                hidden = e.removed && !e.temp,
-            )
+        val byId = HashMap<String, Cand>()
+        library.forEach { e ->
+            if (e.type != "other" && (!e.removed || e.temp) && e.timeOffset > 0) {
+                byId[e.id] = Cand(
+                    e.id, e.type, e.name, e.poster, e.videoId ?: e.id, e.timeOffset, e.duration,
+                    maxOf(e.mtime, e.lastWatched),
+                )
+            }
         }
-        Store.allProgress().forEach { p ->
-            cands += Cand(p.metaId, p.type, p.name, p.poster, p.videoId, p.position, p.duration, p.updated, false)
+        val inLibrary = library.associateBy { it.id }
+        Store.allProgress().groupBy { it.metaId }.forEach { (metaId, list) ->
+            val p = list.maxByOrNull { it.updated } ?: return@forEach
+            val lib = inLibrary[metaId]
+            val libTime = lib?.let { maxOf(it.mtime, it.lastWatched) } ?: -1
+            if (p.updated <= libTime) return@forEach // Stremio has newer info
+            if (lib != null && lib.removed && !lib.temp) return@forEach // removed from library on purpose
+            val finished = p.duration > 0 && p.position >= p.duration * 0.95
+            if (finished || p.position <= 0) {
+                byId.remove(metaId)
+            } else {
+                byId[metaId] = Cand(metaId, p.type, p.name, p.poster ?: lib?.poster, p.videoId, p.position, p.duration, p.updated)
+            }
         }
-        return cands.groupBy { it.metaId }
-            .mapNotNull { (_, list) -> list.maxByOrNull { it.time } }
-            .filter { c -> !c.hidden && (c.pos == 1L || c.pos > 5_000) && (c.dur <= 0 || c.pos < c.dur * 0.95) }
+        return byId.values
             .sortedByDescending { it.time }
-            .take(30)
+            .take(50)
             .map { c ->
                 CardItem(
                     meta = MetaItem(id = c.metaId, type = c.type, name = c.name, poster = c.poster),
                     videoId = c.videoId,
-                    progress = if (c.dur > 0 && c.pos > 1) c.pos.toFloat() / c.dur else null,
+                    progress = if (c.dur > 0 && c.pos > 1) (c.pos.toFloat() / c.dur).coerceIn(0.02f, 1f) else null,
                     badge = if (c.type == "series") {
                         episodeLabel(c.videoId)?.let { if (c.pos == 1L) "NEXT · $it" else it }
                     } else null,
@@ -573,7 +607,10 @@ class AppModel(private val activity: MainActivity) {
                         if (finished) dur.toLong() else pos.toLong(), dur.toLong(), System.currentTimeMillis()),
                 )
                 if (Store.syncProgress) AppScope.launch {
-                    Repo.syncProgress(p.req.type, p.req.metaId, p.req.videoId, pos.toLong(), dur.toLong(), finished)
+                    Repo.syncProgress(
+                        p.req.type, p.req.metaId, p.req.videoId, pos.toLong(), dur.toLong(), finished,
+                        null, p.req.name, p.req.poster,
+                    )
                 }
             }
             if (data?.getStringExtra("end_by") == "playback_completion") outcome = "ended"

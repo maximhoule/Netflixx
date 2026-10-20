@@ -81,9 +81,19 @@ class MainActivity : ComponentActivity() {
         return super.dispatchKeyEvent(event)
     }
 
+    var isForeground = false
+
     override fun onResume() {
         super.onResume()
+        isForeground = true
+        model.resumeTrailer()
         model.onResume()
+    }
+
+    override fun onPause() {
+        isForeground = false
+        model.pauseTrailer()
+        super.onPause()
     }
 }
 

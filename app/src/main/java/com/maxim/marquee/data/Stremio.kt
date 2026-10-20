@@ -179,11 +179,14 @@ object Repo {
      */
     suspend fun syncProgress(
         type: String, metaId: String, videoId: String, pos: Long, dur: Long, finished: Boolean,
-        nextVideoId: String? = null,
+        nextVideoId: String? = null, name: String? = null, poster: String? = null,
     ) {
         val key = Store.authKey ?: return
         safe {
-            val item = StremioApi.libraryItem(key, metaId) ?: return
+            // Not in the library yet: create a temporary entry, exactly like Stremio does when you
+            // press play, so it shows in Continue Watching on your other devices.
+            val item = StremioApi.libraryItem(key, metaId)
+                ?: if (name != null) newItem(metaId, type, name, poster, removed = true, temp = true) else return
             val state = item.obj("state") ?: return
             val now = isoNow()
             state.put("lastWatched", now)
@@ -210,6 +213,32 @@ object Repo {
         }
     }
 
+    /** A library entry in Stremio's exact format (see stremio-core LibraryItem). */
+    private fun newItem(
+        id: String, type: String, name: String, poster: String?,
+        removed: Boolean, temp: Boolean, defaultVideoId: String? = null,
+    ): JSONObject {
+        val now = isoNow()
+        return JSONObject()
+            .put("_id", id).put("name", name).put("type", type)
+            .put("poster", poster ?: JSONObject.NULL).put("posterShape", "poster")
+            .put("removed", removed).put("temp", temp)
+            .put("_ctime", now).put("_mtime", now)
+            .put(
+                "state",
+                JSONObject()
+                    .put("lastWatched", now).put("timeWatched", 0L).put("timeOffset", 0L)
+                    .put("overallTimeWatched", 0L).put("timesWatched", 0).put("flaggedWatched", 0)
+                    .put("duration", 0L).put("video_id", JSONObject.NULL).put("watched", JSONObject.NULL)
+                    .put("noNotif", false),
+            )
+            .put(
+                "behaviorHints",
+                JSONObject().put("defaultVideoId", defaultVideoId ?: JSONObject.NULL)
+                    .put("featuredVideoId", JSONObject.NULL).put("hasScheduledVideos", false),
+            )
+    }
+
     /** Removes a title from Continue Watching everywhere (Stremio's "rewind"). */
     suspend fun rewind(metaId: String) {
         val key = Store.authKey ?: return
@@ -231,24 +260,7 @@ object Repo {
                 existing.put("removed", !add).put("temp", false).put("_mtime", now)
             } else {
                 if (!add) return true
-                JSONObject()
-                    .put("_id", meta.id).put("name", meta.name).put("type", meta.type)
-                    .put("poster", meta.poster ?: JSONObject.NULL).put("posterShape", "poster")
-                    .put("removed", false).put("temp", false)
-                    .put("_ctime", now).put("_mtime", now)
-                    .put(
-                        "state",
-                        JSONObject()
-                            .put("lastWatched", now).put("timeWatched", 0L).put("timeOffset", 0L)
-                            .put("overallTimeWatched", 0L).put("timesWatched", 0).put("flaggedWatched", 0)
-                            .put("duration", 0L).put("video_id", JSONObject.NULL).put("watched", JSONObject.NULL)
-                            .put("noNotif", false),
-                    )
-                    .put(
-                        "behaviorHints",
-                        JSONObject().put("defaultVideoId", meta.defaultVideoId ?: JSONObject.NULL)
-                            .put("featuredVideoId", JSONObject.NULL).put("hasScheduledVideos", false),
-                    )
+                newItem(meta.id, meta.type, meta.name, meta.poster, removed = false, temp = false, defaultVideoId = meta.defaultVideoId)
             }
             StremioApi.putLibraryItem(key, item)
             true

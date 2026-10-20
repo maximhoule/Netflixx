@@ -227,7 +227,7 @@ fun ActionButton(
 
 /** Full-bleed artwork that fades into black on the left and bottom. */
 @Composable
-fun Backdrop(url: String?, modifier: Modifier = Modifier) {
+fun Backdrop(url: String?, modifier: Modifier = Modifier, video: (@Composable () -> Unit)? = null) {
     Box(modifier) {
         Crossfade(targetState = url, animationSpec = tween(220), label = "backdrop") { u ->
             if (u != null) {
@@ -240,6 +240,7 @@ fun Backdrop(url: String?, modifier: Modifier = Modifier) {
                 )
             }
         }
+        video?.invoke()
         Box(
             Modifier.matchParentSize().background(
                 Brush.horizontalGradient(0f to C.Bg, 0.3f to C.Bg.copy(alpha = 0.75f), 0.65f to Color.Transparent),

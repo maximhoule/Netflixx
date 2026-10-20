@@ -229,8 +229,8 @@ fun CardMenuOverlay(model: AppModel) {
             m.item.badge?.let { Text(it, color = C.Dim, fontSize = 14.sp) }
             Spacer(Modifier.height(18.dp))
             val options = mutableListOf<Pair<String, () -> Unit>>()
-            if (m.item.videoId != null) options += "Resume" to { model.closeCardMenu(); model.resume(m.item) }
             options += "Details" to { model.closeCardMenu(); model.openDetail(meta) }
+            if (m.item.videoId != null) options += "Resume" to { model.closeCardMenu(); model.resume(m.item) }
             options += (if (model.inMyList(meta.id)) "Remove from My List" else "Add to My List") to {
                 model.toggleMyList(meta); model.closeCardMenu()
             }

@@ -640,6 +640,8 @@ class AppModel(private val activity: MainActivity) {
     }
 
     fun openCardMenu(b: BrowseState?, item: CardItem, fromContinue: Boolean) {
+        // If OK is still held, its release must not "click" the menu's first option.
+        activity.swallowOkUp = activity.okHeld
         cardMenu = CardMenu(item, b, fromContinue)
     }
 

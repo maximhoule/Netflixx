@@ -476,7 +476,7 @@ class AppModel(private val activity: MainActivity) {
                     defs += RowModel("trakt-recs", "Recommended for You", RowSource.Trakt("recs"))
                 }
             }
-            // Sports and live TV straight after Continue Watching on Home (and on their own tab).
+            // Sports and live TV live only on their own tab.
             val hidden = Store.hiddenRows
             val recaps = Store.showRecaps
             fun shown(a: com.maxim.marquee.data.Addon, c: Catalog) =
@@ -495,7 +495,6 @@ class AppModel(private val activity: MainActivity) {
                 b.signature = sig
                 return@forEach
             }
-            if (b.withContinue) defs += sportsRows
             if (com.maxim.marquee.data.Emby.connected) {
                 embyLibraries.filter { lib ->
                     when (b.type) {
@@ -509,8 +508,8 @@ class AppModel(private val activity: MainActivity) {
             }
             // Rows with the same name from different addons (e.g. two "Popular Movies") become one row.
             val catalogRows = Repo.boardCatalogs(b.type)
-                // Sports are already near the top of Home; hidden rows and recaps stay hidden.
-                .filter { (a, c) -> shown(a, c) && !(b.withContinue && Repo.isSports(a, c)) }
+                // Sports only on the Sports tab; hidden rows and recaps stay hidden.
+                .filter { (a, c) -> shown(a, c) && !Repo.isSports(a, c) }
                 .groupBy { (_, c) -> rowTitle(c).lowercase() }
                 .values
                 .mapIndexed { i, group ->

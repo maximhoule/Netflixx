@@ -60,6 +60,13 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
     val progress = remember(req, tick, model.library) { model.progressFor(meta.id, req.videoId) }
     var season by remember(s, seasons) { mutableStateOf(target?.season ?: seasons.firstOrNull() ?: 1) }
 
+    var related by remember(s) { mutableStateOf<List<com.maxim.marquee.data.MetaItem>>(emptyList()) }
+    var collection by remember(s) { mutableStateOf<com.maxim.marquee.data.Tmdb.Collection?>(null) }
+    LaunchedEffect(meta.id, meta.genres.size) {
+        related = model.relatedFor(meta)
+        if (meta.type == "movie") collection = com.maxim.marquee.data.Tmdb.collectionFor(meta.id)
+    }
+
     LaunchedEffect(req.videoId) {
         kotlinx.coroutines.delay(500)
         model.prefetch(req.type, req.videoId)
@@ -185,6 +192,23 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
                     }
                 }
             }
+            collection?.let { c ->
+                DetailRow(c.name, c.items.map { com.maxim.marquee.data.CardItem(it) }, model)
+            }
+            if (related.isNotEmpty()) {
+                DetailRow("More Like This", related.map { com.maxim.marquee.data.CardItem(it) }, model)
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailRow(title: String, cards: List<com.maxim.marquee.data.CardItem>, model: AppModel) {
+    Spacer(Modifier.height(26.dp))
+    Text(title, color = Color(0xFFE5E5E5), fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(vertical = 12.dp, horizontal = 4.dp)) {
+        items(cards, key = { it.meta.id }) { item ->
+            PosterCard(item = item, width = CARD_W, onClick = { model.openDetail(item.meta) })
         }
     }
 }

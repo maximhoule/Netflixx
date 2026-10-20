@@ -233,6 +233,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 ui.playing = isPlaying
+                if (!finishing) scrobble(if (isPlaying) "start" else "pause")
             }
 
             override fun onTracksChanged(tracks: Tracks) {
@@ -705,8 +706,19 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         }
     }
 
+    /** Tells Trakt what's playing (start / pause / stop with % watched). */
+    private fun scrobble(action: String) {
+        if (!started || !com.maxim.marquee.data.Trakt.connected) return
+        val dur = player.duration
+        if (dur <= 0 || dur == C.TIME_UNSET) return
+        val pct = if (outcome == "ended" || outcome == "next") 100f else player.currentPosition * 100f / dur
+        val t = type; val v = videoId
+        AppScope.launch { runCatching { com.maxim.marquee.data.Trakt.scrobble(action, t, v, pct) } }
+    }
+
     override fun finish() {
         if (!finishing) {
+            if (started && ::player.isInitialized) scrobble("stop")
             finishing = true
             if (started) saveProgress(sync = true, stopped = true)
             setResult(

@@ -95,6 +95,8 @@ data class Video(
     val episode: Int,
     val thumbnail: String?,
     val overview: String?,
+    /** Air date (epoch ms), 0 if unknown. */
+    val released: Long = 0,
 ) {
     val label get() = "S$season:E$episode"
 
@@ -109,6 +111,7 @@ data class Video(
                 episode = ep,
                 thumbnail = o.str("thumbnail"),
                 overview = o.str("overview") ?: o.str("description"),
+                released = parseIso(o.str("released") ?: o.str("firstAired")),
             )
         }
     }
@@ -271,6 +274,8 @@ data class LibEntry(
     val timeOffset: Long,
     val duration: Long,
     val posterShape: String? = null,
+    /** User turned off new-episode notifications for this show in Stremio. */
+    val noNotif: Boolean = false,
 ) {
     val inMyList get() = !removed && !temp && (type == "movie" || type == "series")
 
@@ -291,6 +296,7 @@ data class LibEntry(
                 timeOffset = st?.long("timeOffset") ?: 0,
                 duration = st?.long("duration") ?: 0,
                 posterShape = o.str("posterShape"),
+                noNotif = st?.optBoolean("noNotif", false) ?: false,
             )
         }
     }

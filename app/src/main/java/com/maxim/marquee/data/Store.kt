@@ -118,6 +118,30 @@ object Store {
     val deviceId: String
         get() = string("deviceId") ?: java.util.UUID.randomUUID().toString().also { setString("deviceId", it) }
 
+    // ---- Trakt / TMDB ----
+    var traktClientId: String?
+        get() = string("traktClientId")
+        set(v) = setString("traktClientId", v)
+    var traktSecret: String?
+        get() = string("traktSecret")
+        set(v) = setString("traktSecret", v)
+    var traktAccess: String?
+        get() = string("traktAccess")
+        set(v) = setString("traktAccess", v)
+    var traktRefresh: String?
+        get() = string("traktRefresh")
+        set(v) = setString("traktRefresh", v)
+    var traktExpires: Long
+        get() = prefs.getLong("traktExpires", 0)
+        set(v) = prefs.edit().putLong("traktExpires", v).apply()
+    var tmdbKey: String?
+        get() = string("tmdbKey")
+        set(v) = setString("tmdbKey", v)
+
+    fun traktSignOut() {
+        prefs.edit().remove("traktAccess").remove("traktRefresh").remove("traktExpires").apply()
+    }
+
     fun embySignOut() {
         prefs.edit().remove("embyServer").remove("embyToken").remove("embyUserId").remove("embyUserName").apply()
     }

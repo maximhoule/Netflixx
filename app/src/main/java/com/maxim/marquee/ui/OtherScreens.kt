@@ -513,6 +513,25 @@ fun SettingsScreen(model: AppModel) {
             "Checks every time you open Marquee · installed: build ${com.maxim.marquee.Updater.currentBuild(LocalContext.current)}",
         ) { Store.autoUpdate = !Store.autoUpdate; version++ }
         SettingRow("Check for updates now", "") { model.checkForUpdate(manual = true) }
+        SettingRow("Set up from your phone", "", "Scan a QR code to sign in to Stremio, Emby, Trakt and TMDB without the remote") {
+            model.stack.add(com.maxim.marquee.Screen.PhoneSetup)
+        }
+        val trakt = com.maxim.marquee.data.Trakt
+        when {
+            trakt.connected -> SettingRow("Trakt", "Connected", "Scrobbling, watchlist and recommendations · select to disconnect") {
+                model.traktSignOut(); version++
+            }
+            trakt.hasKeys -> SettingRow("Trakt", "Not connected", "Select to approve Marquee on trakt.tv") {
+                model.stack.add(com.maxim.marquee.Screen.TraktActivate)
+            }
+            else -> SettingRow("Trakt", "Not set up", "Add your Trakt keys with \"Set up from your phone\"") {
+                model.stack.add(com.maxim.marquee.Screen.PhoneSetup)
+            }
+        }
+        SettingRow(
+            "TMDB key", if (com.maxim.marquee.data.Tmdb.configured) "Saved" else "Not set",
+            "Enables movie collections on detail pages",
+        ) { model.stack.add(com.maxim.marquee.Screen.PhoneSetup) }
         SettingRow("Signed in as", Store.email ?: "", "Select to sign out") { model.signOut() }
         Text(
             "Addons: " + Repo.addons.joinToString(", ") { it.name },
@@ -650,8 +669,9 @@ fun LoginScreen(model: AppModel) {
         focusedLabelColor = Color.White, unfocusedLabelColor = C.Dim, cursorColor = C.Red,
     )
 
-    Row(Modifier.fillMaxSize().background(C.Bg).padding(64.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f).padding(end = 48.dp)) {
+    val setupUrl = rememberPhoneSetup(model)
+    Row(Modifier.fillMaxSize().background(C.Bg).padding(56.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(end = 40.dp)) {
             Text("MARQUEE", color = C.Red, fontSize = 52.sp, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(16.dp))
             Text("Sign in with your Stremio account", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
@@ -685,5 +705,7 @@ fun LoginScreen(model: AppModel) {
                 Text(it, color = C.Red, fontSize = 15.sp)
             }
         }
+        Spacer(Modifier.width(40.dp))
+        PhoneSetupPanel(setupUrl, "Or sign in from your phone")
     }
 }

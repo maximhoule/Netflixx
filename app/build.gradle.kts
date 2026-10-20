@@ -86,6 +86,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-hls:$media3")
     implementation("androidx.media3:media3-exoplayer-dash:$media3")
     implementation("androidx.media3:media3-ui:$media3")
+    // Streams over the app's own HTTP client: connection reuse, HTTP/2, sturdier on flaky links.
+    implementation("androidx.media3:media3-datasource-okhttp:$media3")
     // Software decoders for DTS / TrueHD / E-AC3 audio that most TV boxes can't decode natively.
     // Must match the media3 version above (Jellyfin publishes one build per media3 release).
     implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.5.0+1")

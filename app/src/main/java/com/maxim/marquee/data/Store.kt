@@ -202,6 +202,42 @@ object Store {
         get() = prefs.getInt("trailerMode", 1)
         set(v) = prefs.edit().putInt("trailerMode", v).apply()
 
+    /** Send Dolby / DTS audio untouched to the TV or soundbar when it supports it (otherwise decoded here). */
+    var passthrough: Boolean
+        get() = bool("passthrough", true)
+        set(v) = setBool("passthrough", v)
+
+    /** Night mode: evens out loud and quiet scenes and lifts voices. */
+    var nightMode: Boolean
+        get() = bool("nightMode", false)
+        set(v) = setBool("nightMode", v)
+
+    /** Audio and subtitle choices remembered per show. */
+    data class ShowPrefs(val audioLang: String?, val subLang: String?, val subsOn: Boolean?)
+
+    fun showPrefs(metaId: String): ShowPrefs? = safe {
+        val o = JSONObject(prefs.getString("showPrefs", null) ?: return@safe null).optJSONObject(metaId) ?: return@safe null
+        ShowPrefs(o.str("audio"), o.str("sub"), if (o.has("subsOn")) o.optBoolean("subsOn") else null)
+    }
+
+    fun saveShowPrefs(metaId: String, audioLang: String? = null, subLang: String? = null, subsOn: Boolean? = null) {
+        safe {
+            val all = JSONObject(prefs.getString("showPrefs", null) ?: "{}")
+            val o = all.optJSONObject(metaId) ?: JSONObject()
+            audioLang?.let { o.put("audio", it) }
+            subLang?.let { o.put("sub", it) }
+            subsOn?.let { o.put("subsOn", it) }
+            o.put("t", System.currentTimeMillis())
+            all.put(metaId, o)
+            // Keep the 300 most recent shows.
+            if (all.length() > 300) {
+                val oldest = all.keys().asSequence().toList().sortedBy { all.optJSONObject(it)?.optLong("t") ?: 0 }
+                oldest.take(all.length() - 300).forEach { all.remove(it) }
+            }
+            prefs.edit().putString("showPrefs", all.toString()).apply()
+        }
+    }
+
     /** Last audio language picked in the player; becomes the default. */
     var audioLang: String?
         get() = string("audioLang")

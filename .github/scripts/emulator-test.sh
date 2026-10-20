@@ -92,16 +92,22 @@ key BACK; sleep 2; shot profiles_after_cancel
 key DPAD_DOWN DPAD_CENTER; sleep 2; shot manage_profiles
 key BACK; sleep 1; key BACK; sleep 2; shot profiles_closed
 
-summary "== player (public test stream)"
+summary "== player (public test stream + addon subtitle file)"
+SUBURL="https://raw.githubusercontent.com/maximhoule/Netflixx/main/.github/scripts/test-subtitles.srt"
 adb shell am start -n $PKG/.PlayerActivity \
   --es url "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --es type movie \
-  --es metaId tt1254207 --es videoId tt1254207 --es name "Big\ Buck\ Bunny" --es streamName "Test\ stream" >/dev/null
+  --es metaId tt1254207 --es videoId tt1254207 --es name "Big\ Buck\ Bunny" --es streamName "Test\ stream" \
+  --es subs "'[{\"url\":\"$SUBURL\",\"lang\":\"eng\",\"label\":\"ENG\"}]'" >/dev/null
 sleep 20; shot player_playing
 key DPAD_RIGHT; sleep 1; shot player_seek_flash
-key DPAD_UP; sleep 2; shot player_controls
-# Controls hide after 5 s without a key press; bring them back right before navigating them.
+key DPAD_UP; sleep 2; shot player_controls_badges
+# Audio & subtitles panel: Play, -10, +10, CC
 key DPAD_UP; key DPAD_RIGHT DPAD_RIGHT DPAD_RIGHT DPAD_CENTER; sleep 2; shot player_panel
-key BACK; sleep 1; key BACK; sleep 1; key BACK; sleep 3; shot after_player
+key DPAD_DOWN DPAD_CENTER; sleep 1; shot night_mode_on
+key DPAD_RIGHT DPAD_UP DPAD_UP DPAD_DOWN DPAD_CENTER; sleep 4; shot addon_sub_selected
+key DPAD_DOWN DPAD_DOWN DPAD_CENTER; sleep 1; shot sub_timing_later
+key BACK; sleep 1; key BACK; sleep 3; shot subtitle_on_video
+key BACK; sleep 1; key BACK; sleep 3; shot after_player
 
 summary "== results"
 adb logcat -d > "$OUT/logcat.txt"
@@ -114,6 +120,8 @@ fi
 grep -E "ANR in $PKG" "$OUT/logcat.txt" | tee -a "$OUT/summary.txt" || true
 grep -E "^.{0,40}[EW] .*($PKG|AndroidRuntime|ExoPlayer|MediaCodec)" "$OUT/logcat.txt" | grep -v "chatty" | head -120 > "$OUT/errors_warnings.txt" || true
 grep -E " Marquee *:" "$OUT/logcat.txt" > "$OUT/marquee_log.txt" || true
+grep -E "ExoPlayerImplInternal|MediaCodecRenderer|AudioTrack|DefaultAudioSink" "$OUT/logcat.txt" | grep -E " E | W " | head -40 > "$OUT/player_errors.txt" || true
+summary "Player warnings/errors: $(wc -l < "$OUT/player_errors.txt")"; head -15 "$OUT/player_errors.txt" | tee -a "$OUT/summary.txt"
 summary "App log lines: $(wc -l < "$OUT/marquee_log.txt")"; grep -E "search '|GET failed" "$OUT/marquee_log.txt" | head -40 | tee -a "$OUT/summary.txt"
 grep -E "Janky frames|Total frames|50th|90th|99th" "$OUT/gfxinfo_browse.txt" | head -8 | tee -a "$OUT/summary.txt"
 exit 0

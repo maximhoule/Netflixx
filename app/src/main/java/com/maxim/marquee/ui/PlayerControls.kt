@@ -99,6 +99,13 @@ class PlayerUiState {
     var live by mutableStateOf(false)
     /** Preview picture for where you're seeking to (Emby / Jellyfin only). */
     var thumb by mutableStateOf<ImageBitmap?>(null)
+    var nightMode by mutableStateOf(false)
+    /** Addon subtitle being shown by the app (-1 = none), its current line, and the timing shift. */
+    var extIndex by mutableIntStateOf(-1)
+    var extText by mutableStateOf<String?>(null)
+    var subDelay by mutableLongStateOf(0L)
+    /** "4K", "Dolby Vision", "Dolby Atmos", "5.1"… */
+    var badges by mutableStateOf<List<String>>(emptyList())
 }
 
 private val THUMB_H = 126.dp
@@ -134,6 +141,51 @@ interface PlayerHost {
     fun setSubStyle(v: Int)
     fun subSize(): Int
     fun subStyle(): Int
+    /** Subtitle files from addons (shown by the app, with adjustable timing). */
+    val externalSubs: List<com.maxim.marquee.data.SubTrack>
+    fun selectExternal(index: Int)
+    /** Positive = later. 0 resets. */
+    fun shiftSubtitles(deltaMs: Long)
+    fun setNightMode(on: Boolean)
+}
+
+/** <i>…</i> → italics. */
+private fun subtitleText(raw: String): androidx.compose.ui.text.AnnotatedString =
+    androidx.compose.ui.text.buildAnnotatedString {
+        var rest = raw
+        while (rest.isNotEmpty()) {
+            val open = rest.indexOf("<i>")
+            if (open < 0) { append(rest.replace("</i>", "")); break }
+            append(rest.substring(0, open).replace("</i>", ""))
+            val close = rest.indexOf("</i>", open + 3).let { if (it < 0) rest.length else it }
+            pushStyle(androidx.compose.ui.text.SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic))
+            append(rest.substring(open + 3, close))
+            pop()
+            rest = if (close + 4 <= rest.length) rest.substring(close + 4) else ""
+        }
+    }
+
+/** Addon subtitles, styled like the player's own (size and style from Settings). */
+@Composable
+private fun ExternalSubtitle(host: PlayerHost, ui: PlayerUiState, modifier: Modifier) {
+    val text = ui.extText ?: return
+    @Suppress("UNUSED_VARIABLE") val tick = ui.settingsTick
+    val scale = when (host.subSize()) { 0 -> 0.8f; 2 -> 1.3f; 3 -> 1.6f; else -> 1.05f }
+    val boxed = host.subStyle() == 1
+    Text(
+        subtitleText(text),
+        color = Color.White,
+        fontSize = (27 * scale).sp,
+        lineHeight = (35 * scale).sp,
+        fontWeight = FontWeight.SemiBold,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        style = androidx.compose.ui.text.TextStyle(
+            shadow = if (boxed) null else androidx.compose.ui.graphics.Shadow(Color.Black, androidx.compose.ui.geometry.Offset(2f, 2f), 6f),
+        ),
+        modifier = modifier
+            .then(if (boxed) Modifier.background(Color(0xBE000000), RoundedCornerShape(4.dp)) else Modifier)
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+    )
 }
 
 private fun tryFocus(fr: FocusRequester) {
@@ -230,6 +282,11 @@ fun PlayerScreen(host: PlayerHost, ui: PlayerUiState, playerView: PlayerView) {
             }
         }
 
+        ExternalSubtitle(
+            host, ui,
+            Modifier.align(Alignment.BottomCenter).padding(bottom = if (ui.controls) 210.dp else 60.dp, start = 120.dp, end = 120.dp),
+        )
+
         if (ui.controls) Controls(host, ui)
 
         val bottomPad = if (ui.controls) 200.dp else 64.dp
@@ -305,6 +362,18 @@ private fun Controls(host: PlayerHost, ui: PlayerUiState) {
         Column(Modifier.align(Alignment.TopStart).padding(start = 48.dp, top = 30.dp)) {
             Text(host.title, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             host.episode?.let { Text(it, color = C.Dim, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            if (ui.badges.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ui.badges.forEach { b ->
+                        Text(
+                            b, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                            modifier = Modifier.border(1.dp, Color(0x99FFFFFF), RoundedCornerShape(3.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
+                }
+            }
         }
         Box(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(280.dp)
@@ -495,16 +564,25 @@ private fun AudioSubsPanel(host: PlayerHost, ui: PlayerUiState) {
             when (g.type) {
                 MC.TRACK_TYPE_AUDIO -> audio += TrackOpt(g, i, audioLabel(f), g.isTrackSelected(i))
                 MC.TRACK_TYPE_TEXT -> {
-                    if (g.isTrackSelected(i)) anySubSelected = true
-                    subs += TrackOpt(g, i, subtitleLabel(f), g.isTrackSelected(i))
+                    // Forced-only tracks play by themselves when subtitles are off; don't count them as "on".
+                    val forced = f.selectionFlags and MC.SELECTION_FLAG_FORCED != 0
+                    val sel = g.isTrackSelected(i) && ui.extIndex < 0
+                    if (sel && !forced) anySubSelected = true
+                    subs += TrackOpt(g, i, subtitleLabel(f), sel && !forced)
                 }
             }
         }
     }
-    val allSubs = listOf(TrackOpt(null, -1, "Off", !anySubSelected)) + subs
+    val external = host.externalSubs
     val audioFr = remember { FocusRequester() }
     val subFr = remember { FocusRequester() }
     FocusFirstSelected(if (audio.isNotEmpty()) audioFr else subFr)
+    val offSelected = !anySubSelected && ui.extIndex < 0
+    val selectedSub = when {
+        ui.extIndex >= 0 -> 1 + subs.size + ui.extIndex
+        offSelected -> 0
+        else -> 1 + subs.indexOfFirst { it.selected }.coerceAtLeast(0)
+    }
 
     Row(Modifier.fillMaxSize()) {
         Column(Modifier.weight(1f).padding(end = 16.dp)) {
@@ -514,14 +592,40 @@ private fun AudioSubsPanel(host: PlayerHost, ui: PlayerUiState) {
                     val sel = audio.indexOfFirst { it.selected }.let { if (it < 0) 0 else it }
                     OptionRow(o.label, o.selected, if (i == sel) audioFr else null) { o.group?.let { host.selectAudio(it, o.index) } }
                 }
+                item {
+                    Spacer(Modifier.height(14.dp))
+                    OptionRow(
+                        "Night mode", ui.nightMode,
+                        sub = "Quieter loud scenes, clearer voices",
+                    ) { host.setNightMode(!ui.nightMode) }
+                }
             }
         }
         Column(Modifier.weight(1f)) {
             PanelTitle("Subtitles")
             LazyColumn(contentPadding = PaddingValues(bottom = 40.dp)) {
-                itemsIndexed(allSubs) { i, o ->
-                    val sel = allSubs.indexOfFirst { it.selected }.let { if (it < 0) 0 else it }
-                    OptionRow(o.label, o.selected, if (i == sel) subFr else null) { host.selectSubtitle(o.group, o.index) }
+                item { OptionRow("Off", offSelected, if (selectedSub == 0) subFr else null) { host.selectSubtitle(null, -1) } }
+                itemsIndexed(subs) { i, o ->
+                    OptionRow(o.label, o.selected, if (selectedSub == 1 + i) subFr else null) { host.selectSubtitle(o.group, o.index) }
+                }
+                itemsIndexed(external) { i, st ->
+                    val source = st.label.substringAfter(" · ", "").ifBlank { "Addon" }
+                    OptionRow(
+                        languageName(st.lang) ?: st.lang, ui.extIndex == i,
+                        if (selectedSub == 1 + subs.size + i) subFr else null, sub = source,
+                    ) { host.selectExternal(i) }
+                }
+                if (ui.extIndex >= 0) {
+                    item {
+                        val s = ui.subDelay / 1000.0
+                        Text(
+                            "Timing: " + if (ui.subDelay == 0L) "in sync" else (if (s > 0) "+" else "") + String.format(Locale.US, "%.1f s", s),
+                            color = C.Dim, fontSize = 14.sp, modifier = Modifier.padding(start = 14.dp, top = 16.dp, bottom = 4.dp),
+                        )
+                    }
+                    item { OptionRow("Show subtitles earlier", false, sub = "−0.5 s") { host.shiftSubtitles(-500) } }
+                    item { OptionRow("Show subtitles later", false, sub = "+0.5 s") { host.shiftSubtitles(500) } }
+                    if (ui.subDelay != 0L) item { OptionRow("Reset timing", false) { host.shiftSubtitles(0) } }
                 }
             }
         }

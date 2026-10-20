@@ -492,6 +492,13 @@ fun SettingsScreen(model: AppModel) {
         SettingRow("Skip intros automatically", onOff(Store.autoSkipIntro), "Otherwise a Skip Intro button appears (IntroDB data)") {
             Store.autoSkipIntro = !Store.autoSkipIntro; version++
         }
+        SettingRow(
+            "Audio passthrough", if (Store.passthrough) "Auto" else "Off",
+            "Auto sends Dolby / DTS straight to your TV or soundbar. Off decodes it here (try this if you get silence or crackling)",
+        ) { Store.passthrough = !Store.passthrough; version++ }
+        SettingRow("Night mode", onOff(Store.nightMode), "Evens out loud and quiet scenes and lifts voices · also in the player's audio menu") {
+            Store.nightMode = !Store.nightMode; version++
+        }
         SettingRow("Match frame rate", onOff(Store.matchFrameRate), "Switches the TV to 24p/25p/etc. for smoother motion") {
             Store.matchFrameRate = !Store.matchFrameRate; version++
         }

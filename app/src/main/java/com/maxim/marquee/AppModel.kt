@@ -1048,10 +1048,14 @@ class AppModel(private val activity: MainActivity) {
 
     private suspend fun launchStream(p: Pending) {
         val s = p.streams[p.index]
-        val subs = (s.subtitles + p.addonSubs)
-            .filter { Store.wantsSubtitle(it.lang) }
-            .distinctBy { it.url }
-            .take(12)
+        // Your language first (this show's choice, else the general one), then English, then a few
+        // others, so the player's subtitle menu has real choices.
+        val want = Store.normLang((Store.showPrefs(p.req.metaId)?.subLang ?: Store.subLang).ifBlank { "eng" })
+        val all = (s.subtitles + p.addonSubs).distinctBy { it.url }
+        val mine = all.filter { Store.normLang(it.lang) == want }.take(8)
+        val english = if (want == "eng") emptyList() else all.filter { Store.normLang(it.lang) == "eng" }.take(3)
+        val others = all.filter { it !in mine && it !in english }.distinctBy { Store.normLang(it.lang) }.take(10)
+        val subs = mine + english + others
         val start = resumeMs(p.req)
         // Episode list + next episode for the player's Episodes panel and "Next Episode" card.
         val meta = if (p.req.type == "series") Repo.meta(p.req.type, p.req.metaId) else null
@@ -1093,6 +1097,7 @@ class AppModel(private val activity: MainActivity) {
         pending = null
         var outcome = data?.getStringExtra("outcome") ?: "exit"
         val httpCode = data?.getIntExtra("httpCode", 0) ?: 0
+        val reason = data?.getStringExtra("reason")
         val outcomeVideo = data?.getStringExtra("videoId")
         val auto = data?.getBooleanExtra("auto", false) ?: false
 
@@ -1140,7 +1145,13 @@ class AppModel(private val activity: MainActivity) {
                             refused -> Screen.Problem.Kind.SERVICE
                             else -> Screen.Problem.Kind.PLAYBACK
                         },
-                        if (refused) "The video server answered \"access denied\" (HTTP ${codes.last { it in 401..403 }})." else null,
+                        when {
+                            refused -> "The video server answered \"access denied\" (HTTP ${codes.last { it in 401..403 }})."
+                            reason == "video" -> "The last source's video format can't be decoded by this TV box. Pick a different source (H.264 / HEVC work best)."
+                            reason == "audio" -> "The last source's audio format couldn't be played. Pick a different source."
+                            reason == "decoder" -> "The TV box's video decoder couldn't handle the last source. Pick a lower quality or a different codec."
+                            else -> null
+                        },
                         p.req,
                     )
                 }

@@ -612,11 +612,14 @@ fun EmbyLoginScreen(model: AppModel) {
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val focus = LocalFocusManager.current
-    val firstFr = remember { FocusRequester() }
-    LaunchedEffect(Unit) { withFrameNanos { }; tryFocus(firstFr) }
+    val userFr = remember { FocusRequester() }
+    // Start on the Connect button: focusing a text box pops the keyboard up over the screen.
+    val connectFr = remember { FocusRequester() }
+    LaunchedEffect(Unit) { withFrameNanos { }; tryFocus(connectFr) }
 
     fun submit() {
-        if (busy || address.isBlank() || user.isBlank()) return
+        if (busy) return
+        if (user.isBlank()) { tryFocus(userFr); return }
         busy = true; error = null
         model.embyLogin(address, user, password) { msg -> error = msg; busy = false }
     }
@@ -626,50 +629,59 @@ fun EmbyLoginScreen(model: AppModel) {
         focusedBorderColor = Color.White, unfocusedBorderColor = Color(0xFF666666),
         focusedLabelColor = Color.White, unfocusedLabelColor = C.Dim, cursorColor = C.Red,
     )
-    Row(Modifier.fillMaxSize().background(C.Bg).padding(64.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f).padding(end = 48.dp)) {
-            Text("Connect Emby", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(12.dp))
-            Text(
-                "Your Emby shows and movies will appear on Home, with Continue Watching and Next Up. " +
-                    "Playback is direct from your server, and progress syncs back to Emby. Jellyfin servers work too.",
-                color = C.Dim, fontSize = 16.sp, lineHeight = 22.sp,
-            )
-            Spacer(Modifier.height(10.dp))
-            Text("Server URL, for example https://emby.yourdomain.com", color = C.Dim, fontSize = 14.sp)
-            Text("or a local address like 192.168.1.20:8096", color = C.Dim, fontSize = 14.sp)
-        }
-        Column(Modifier.width(420.dp)) {
-            OutlinedTextField(
-                value = address, onValueChange = { address = it }, singleLine = true,
-                label = { Text("Server URL") }, colors = fieldColors,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
-                keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Down) }),
-                modifier = Modifier.fillMaxWidth().focusRequester(firstFr),
-            )
-            Spacer(Modifier.height(10.dp))
-            OutlinedTextField(
-                value = user, onValueChange = { user = it }, singleLine = true,
-                label = { Text("Username") }, colors = fieldColors,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Down) }),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(10.dp))
-            OutlinedTextField(
-                value = password, onValueChange = { password = it }, singleLine = true,
-                label = { Text("Password") }, colors = fieldColors,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { focus.moveFocus(FocusDirection.Down) }),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(18.dp))
-            ActionButton(if (busy) "Connecting…" else "Connect", modifier = Modifier.fillMaxWidth(), onClick = { submit() })
-            error?.let {
-                Spacer(Modifier.height(10.dp))
-                Text(it, color = C.Red, fontSize = 15.sp)
+    val setupUrl = rememberPhoneSetup(model)
+    Column(
+        Modifier.fillMaxSize().background(C.Bg).padding(horizontal = 64.dp, vertical = 36.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text("Connect Emby", color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Use your Emby Connect email and password (leave Server URL empty: your server is found for you), " +
+                "or your server URL with your server username. Jellyfin servers work too.",
+            color = C.Dim, fontSize = 15.sp, lineHeight = 21.sp,
+        )
+        Spacer(Modifier.height(20.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.width(400.dp)) {
+                OutlinedTextField(
+                    value = user, onValueChange = { user = it }, singleLine = true,
+                    label = { Text("Emby Connect email or username") }, colors = fieldColors,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Down) }),
+                    modifier = Modifier.fillMaxWidth().focusRequester(userFr),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = password, onValueChange = { password = it }, singleLine = true,
+                    label = { Text("Password") }, colors = fieldColors,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Down) }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = address, onValueChange = { address = it }, singleLine = true,
+                    label = { Text("Server URL (optional with Emby Connect)") }, colors = fieldColors,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { focus.moveFocus(FocusDirection.Down) }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(14.dp))
+                ActionButton(
+                    if (busy) "Connecting…" else "Connect", modifier = Modifier.fillMaxWidth(), focusRequester = connectFr,
+                    onClick = { submit() },
+                )
+                error?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, color = C.Red, fontSize = 14.sp, lineHeight = 19.sp)
+                }
             }
+            Spacer(Modifier.width(56.dp))
+            Text("or", color = C.Dim, fontSize = 20.sp)
+            Spacer(Modifier.width(56.dp))
+            PhoneSetupPanel(setupUrl, "Type it on your phone")
         }
     }
 }

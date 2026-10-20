@@ -137,9 +137,9 @@ ${if (result != null) "<div class=\"ok\">${esc(result)}</div>" else ""}
 <label>Email</label><input name="stremio_email" type="email" autocomplete="username">
 <label>Password</label><input name="stremio_password" type="password" autocomplete="current-password"></div>
 <div class="card"><h2>Emby / Jellyfin server</h2>
-<label>Server URL (e.g. https://emby.yourdomain.com or 192.168.1.20:8096)</label><input name="emby_server" type="url" autocapitalize="off" autocorrect="off" spellcheck="false">
-<label>Username</label><input name="emby_user" autocapitalize="off">
-<label>Password</label><input name="emby_password" type="password"></div>
+<label>Emby Connect email, or server username</label><input name="emby_user" autocapitalize="off" autocorrect="off" spellcheck="false">
+<label>Password</label><input name="emby_password" type="password">
+<label>Server URL (leave empty with an Emby Connect email; e.g. https://emby.yourdomain.com or 192.168.1.20:8096)</label><input name="emby_server" type="url" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
 <div class="card"><h2>Trakt</h2>
 <p>Create a free API app at <a href="https://trakt.tv/oauth/applications/new" target="_blank">trakt.tv/oauth/applications/new</a>:
 any name, Redirect URI <b>urn:ietf:wg:oauth:2.0:oob</b>. Paste its keys here; the TV will then show a code to approve.</p>

@@ -47,6 +47,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import kotlin.coroutines.coroutineContext
 
 enum class Tab(val label: String, val icon: ImageVector) {
@@ -1393,12 +1395,14 @@ class AppModel(private val activity: MainActivity) {
             }
         }
         val server = v("emby_server"); val user = v("emby_user")
-        if (server != null && user != null) {
+        if (user != null) {
             try {
-                com.maxim.marquee.data.Emby.login(server, user, form["emby_password"] ?: "")
+                com.maxim.marquee.data.Emby.login(server ?: "", user, form["emby_password"] ?: "")
                 loadEmbyLibraries()
                 rebuildRows(force = true)
                 if (loggedIn) loadLibrary()
+                // Signed in from the phone while the TV shows the Emby screen: leave it.
+                withContext(Dispatchers.Main) { if (stack.lastOrNull() == Screen.EmbyLogin) back() }
                 lines += "✓ Emby: connected as $user"
             } catch (e: CancellationException) {
                 throw e

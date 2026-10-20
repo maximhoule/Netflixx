@@ -102,42 +102,144 @@ object Emby {
         return bases.flatMap { b -> if (b.endsWith("/emby", true)) listOf(b) else listOf(b, "$b/emby") }.distinct()
     }
 
-    /** Signs in and remembers the server. Accepts a server URL or an address (see [candidates]). */
+    /** Why one address didn't work, in words. Higher [rank] = more telling (shown to you first). */
+    private class Miss(val rank: Int, val why: String)
+
+    private fun describe(e: Throwable, base: String): Miss {
+        val host = base.substringAfter("://").substringBefore('/')
+        return when (e) {
+            is java.net.UnknownHostException -> Miss(1, "couldn't find $host (check the spelling, or that the TV has internet)")
+            is javax.net.ssl.SSLException, is java.security.cert.CertificateException ->
+                Miss(3, "$host answered, but its HTTPS certificate isn't trusted (self-signed?). Try http:// with port 8096")
+            is java.net.SocketTimeoutException -> Miss(2, "$host didn't answer in time (is the server on, and reachable from the TV's network?)")
+            is java.net.ConnectException -> Miss(2, "$host refused the connection (wrong port, or the server is off)")
+            else -> Miss(1, "$host: ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
+    private val signInClient by lazy {
+        // Short timeouts per try, so a wrong guess doesn't keep you waiting.
+        Http.client.newBuilder().cache(null)
+            .connectTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
+
+    /** One sign-in call: (HTTP code, body), or the network error. */
+    private suspend fun call(req: Request): Result<Pair<Int, String>> = withContext(Dispatchers.IO) {
+        runCatching { signInClient.newCall(req).execute().use { r -> r.code to (r.body?.string() ?: "") } }
+    }
+
+    private fun save(base: String, token: String, userId: String, name: String) {
+        Store.embyServer = base
+        Store.embyToken = token
+        Store.embyUserId = userId
+        Store.embyUserName = name
+    }
+
+    /**
+     * Signs in and remembers the server. Accepts a server URL or an address (see [candidates]).
+     * With no address, or when the server rejects an email address, signs in through Emby Connect
+     * (your emby.media account), which also finds the server for you.
+     */
     suspend fun login(address: String, username: String, password: String) {
-        val tries = candidates(address)
-        if (tries.isEmpty()) throw IOException("Enter your server URL")
-        val body = JSONObject().put("Username", username).put("Pw", password).put("Password", password)
-        var wrongPassword = false
-        for (base in tries) {
-            val res = withContext(Dispatchers.IO) {
-                safe {
-                    val req = Request.Builder()
-                        .url("$base/Users/AuthenticateByName")
-                        .header("X-Emby-Authorization", authHeader())
-                        .header("Accept", "application/json")
-                        .post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
-                        .build()
-                    // Short timeouts per try, so a wrong guess doesn't keep you waiting.
-                    Http.client.newBuilder().cache(null)
-                        .connectTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
-                        .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                        .build()
-                        .newCall(req).execute().use { r -> r.code to (r.body?.string() ?: "") }
-                }
-            } ?: continue
-            if (res.first == 401) { wrongPassword = true; continue }
-            if (res.first !in 200..299) continue
-            val o = safe { JSONObject(res.second) } ?: continue
-            val tok = o.str("AccessToken") ?: continue
-            val uid = o.obj("User")?.str("Id") ?: continue
-            Store.embyServer = base
-            Store.embyToken = tok
-            Store.embyUserId = uid
-            Store.embyUserName = o.obj("User")?.str("Name") ?: username
+        val looksLikeEmail = username.contains('@')
+        if (address.isBlank()) {
+            if (username.isBlank()) throw IOException("Enter your Emby Connect email, or your server URL and username")
+            connectLogin(username, password, null)
             return
         }
-        if (wrongPassword) throw IOException("Wrong username or password")
-        throw IOException("Couldn't reach an Emby server at ${input(address)}. Check the URL, and that the server is on.")
+        val tries = candidates(address)
+        val body = JSONObject().put("Username", username).put("Pw", password).put("Password", password)
+        var wrongPassword = false
+        var best: Miss? = null
+        fun miss(m: Miss) { if (best == null || m.rank > best!!.rank) best = m }
+        for (base in tries) {
+            val req = Request.Builder()
+                .url("$base/Users/AuthenticateByName")
+                .header("X-Emby-Authorization", authHeader())
+                .header("Accept", "application/json")
+                .post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .build()
+            val res = call(req).getOrElse { miss(describe(it, base)); null } ?: continue
+            if (res.first == 401) { wrongPassword = true; continue }
+            if (res.first !in 200..299) {
+                // 404 just means "not at this path" (we try a few); anything else is worth showing.
+                miss(Miss(if (res.first == 404) 1 else 4, "${base.substringAfter("://").substringBefore('/')} answered HTTP ${res.first}"))
+                continue
+            }
+            val o = safe { JSONObject(res.second) }
+            val tok = o?.str("AccessToken")
+            val uid = o?.obj("User")?.str("Id")
+            if (tok == null || uid == null) { miss(Miss(1, "$base isn't an Emby server")); continue }
+            save(base, tok, uid, o?.obj("User")?.str("Name") ?: username)
+            return
+        }
+        if (wrongPassword && looksLikeEmail) {
+            // An Emby Connect email isn't a server username: sign in through Emby Connect instead.
+            connectLogin(username, password, address)
+            return
+        }
+        if (wrongPassword) throw IOException("Wrong username or password. Use your Emby server username (not your email), or leave Server URL empty and sign in with your Emby Connect email.")
+        throw IOException("Couldn't connect to ${input(address)}: ${best?.why ?: "no answer"}.")
+    }
+
+    /**
+     * Emby Connect: sign in with your emby.media account, list the servers linked to it, and
+     * exchange the server's key for a sign-in on that server. Tries [preferred] first, then the
+     * server's local address, then its remote one.
+     */
+    private suspend fun connectLogin(email: String, password: String, preferred: String?) {
+        val app = "Marquee/1.0"
+        val form = okhttp3.FormBody.Builder().add("nameOrEmail", email).add("rawpw", password).build()
+        val auth = call(
+            Request.Builder().url("https://connect.emby.media/service/user/authenticate")
+                .header("X-Application", app).header("Accept", "application/json").post(form).build(),
+        ).getOrElse { throw IOException("Couldn't reach Emby Connect (${describe(it, "https://connect.emby.media").why})") }
+        if (auth.first == 401 || auth.first == 400) throw IOException("Wrong Emby Connect email or password")
+        if (auth.first !in 200..299) throw IOException("Emby Connect answered HTTP ${auth.first}. Try again in a minute.")
+        val a = safe { JSONObject(auth.second) } ?: throw IOException("Emby Connect sent an unexpected answer")
+        val connectToken = a.str("AccessToken") ?: a.str("ConnectAccessToken") ?: throw IOException("Wrong Emby Connect email or password")
+        val connectUser = a.obj("User")?.str("Id") ?: a.str("ConnectUserId") ?: throw IOException("Emby Connect sent an unexpected answer")
+        val connectName = a.obj("User")?.str("Name") ?: email
+
+        val list = call(
+            Request.Builder().url("https://connect.emby.media/service/servers?userId=${enc(connectUser)}")
+                .header("X-Application", app).header("X-Connect-UserToken", connectToken)
+                .header("Accept", "application/json").build(),
+        ).getOrElse { throw IOException("Couldn't get your servers from Emby Connect (${describe(it, "https://connect.emby.media").why})") }
+        val servers = safe { JSONArray(list.second) }?.objects().orEmpty()
+        if (servers.isEmpty()) {
+            throw IOException(
+                "No server is linked to this Emby Connect account. On your server: Settings → Users → your user → " +
+                    "Emby Connect, enter $email, then try again.",
+            )
+        }
+        var best: Miss? = null
+        fun miss(m: Miss) { if (best == null || m.rank > best!!.rank) best = m }
+        for (srv in servers) {
+            val key = srv.str("AccessKey") ?: continue
+            val addresses = (preferred?.let { candidates(it) }.orEmpty() +
+                listOfNotNull(srv.str("LocalAddress"), srv.str("Url")).flatMap { candidates(it) }).distinct()
+            for (base in addresses) {
+                val res = call(
+                    Request.Builder().url("$base/Connect/Exchange?format=json&ConnectUserId=${enc(connectUser)}")
+                        .header("X-Emby-Token", key).header("X-Emby-Authorization", authHeader())
+                        .header("Accept", "application/json").build(),
+                ).getOrElse { miss(describe(it, base)); null } ?: continue
+                if (res.first !in 200..299) {
+                    miss(Miss(if (res.first == 404) 1 else 4, "${base.substringAfter("://").substringBefore('/')} answered HTTP ${res.first}"))
+                    continue
+                }
+                val o = safe { JSONObject(res.second) } ?: continue
+                val tok = o.str("AccessToken") ?: continue
+                val uid = o.str("LocalUserId") ?: continue
+                save(base, tok, uid, connectName)
+                return
+            }
+        }
+        val names = servers.mapNotNull { it.str("Name") }.joinToString(", ")
+        throw IOException("Signed in to Emby Connect, but couldn't reach your server${if (names.isNotEmpty()) " ($names)" else ""}: ${best?.why ?: "no address worked"}.")
     }
 
     private fun input(a: String) = a.trim().ifEmpty { "that address" }

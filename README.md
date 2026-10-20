@@ -6,7 +6,7 @@ A Netflix-style Android TV front end for your existing Stremio setup. Sign in wi
 
 1. On the TV, install **Downloader** (by AFTVnews) from the Play Store.
 2. Allow Downloader to install unknown apps when prompted.
-3. Enter: `https://github.com/<owner>/<repo>/releases/latest/download/Marquee.apk`
+3. Enter: `https://github.com/maximhoule/Netflixx/releases/latest/download/Marquee.apk`
 4. Open **Marquee**, sign in with your Stremio email and password.
 
 Every push to `main` builds a new APK; reinstalling from the same link updates in place.

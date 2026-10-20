@@ -139,6 +139,8 @@ fun AppRoot(model: AppModel, exit: () -> Unit) {
                         is Screen.Detail -> DetailScreen(model, top)
                         is Screen.Streams -> StreamsScreen(model, top)
                         is Screen.EmbyLogin -> EmbyLoginScreen(model)
+                        is Screen.PhoneSetup -> com.maxim.marquee.ui.PhoneSetupScreen(model)
+                        is Screen.TraktActivate -> com.maxim.marquee.ui.TraktActivateScreen(model)
                     }
                 }
                 // Back: close the top screen; on the home screens go to the menu first, then exit.

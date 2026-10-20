@@ -72,6 +72,8 @@ sealed class Screen {
     data class Detail(val type: String, val id: String, val preview: MetaItem) : Screen()
     data class Streams(val req: PlayReq) : Screen()
     data object EmbyLogin : Screen()
+    data object PhoneSetup : Screen()
+    data object TraktActivate : Screen()
 }
 
 sealed class RowSource {
@@ -81,6 +83,9 @@ sealed class RowSource {
     data object Static : RowSource()
     /** kind: "resume", "nextup" or "latest" (with a library id). */
     data class Emby(val kind: String, val libraryId: String? = null) : RowSource()
+    data object NewEpisodes : RowSource()
+    /** kind: "watchlist" or "recs" */
+    data class Trakt(val kind: String) : RowSource()
 }
 
 data class RowModel(val key: String, val title: String, val source: RowSource)
@@ -132,6 +137,11 @@ class AppModel(private val activity: MainActivity) {
     var syncing by mutableStateOf(false)
     var embyLibraries by mutableStateOf<List<com.maxim.marquee.data.Emby.Library>>(emptyList())
     private var embyEntries: List<com.maxim.marquee.data.Emby.Entry> = emptyList()
+    private var newEpisodes: List<CardItem> = emptyList()
+    private var newEpisodesAt = 0L
+    var traktCode by mutableStateOf<com.maxim.marquee.data.Trakt.DeviceCode?>(null)
+    var traktStatus by mutableStateOf<String?>(null)
+    private var traktJob: Job? = null
     var railFocused = false
     var cardMenu by mutableStateOf<CardMenu?>(null)
     var updateStatus by mutableStateOf<String?>(null)
@@ -307,6 +317,7 @@ class AppModel(private val activity: MainActivity) {
         lastLibraryLoad = System.currentTimeMillis()
         library = Repo.library()
         refreshContinue()
+        scope.launch { loadNewEpisodes() }
         if (com.maxim.marquee.data.Emby.connected) {
             com.maxim.marquee.data.Emby.buildIndex()
             embyEntries = com.maxim.marquee.data.Emby.resume() + com.maxim.marquee.data.Emby.nextUp()
@@ -331,7 +342,14 @@ class AppModel(private val activity: MainActivity) {
         browse.values.forEach { b ->
             if (!force && b.signature == sig && b.rows.isNotEmpty()) return@forEach
             val defs = mutableListOf<RowModel>()
-            if (b.withContinue) defs += RowModel("continue", "Continue Watching", RowSource.Continue)
+            if (b.withContinue) {
+                defs += RowModel("continue", "Continue Watching", RowSource.Continue)
+                defs += RowModel("new-eps", "New Episodes", RowSource.NewEpisodes)
+                if (com.maxim.marquee.data.Trakt.connected) {
+                    defs += RowModel("trakt-watchlist", "My Trakt Watchlist", RowSource.Trakt("watchlist"))
+                    defs += RowModel("trakt-recs", "Recommended for You", RowSource.Trakt("recs"))
+                }
+            }
             if (com.maxim.marquee.data.Emby.connected) {
                 embyLibraries.filter { lib ->
                     when (b.type) {
@@ -370,6 +388,20 @@ class AppModel(private val activity: MainActivity) {
                 b.rowItems[row.key] = continueItems(); b.loaded[row.key] = true; afterRowLoaded(b)
             }
             is RowSource.Static -> b.loaded[row.key] = true
+            is RowSource.NewEpisodes -> {
+                b.rowItems[row.key] = newEpisodes; b.loaded[row.key] = true; afterRowLoaded(b)
+            }
+            is RowSource.Trakt -> {
+                scope.launch {
+                    val items = when (src.kind) {
+                        "watchlist" -> com.maxim.marquee.data.Trakt.watchlist()
+                        else -> com.maxim.marquee.data.Trakt.recommendations()
+                    }.map { CardItem(it) }
+                    b.rowItems[row.key] = items
+                    b.loaded[row.key] = true
+                    afterRowLoaded(b)
+                }
+            }
             is RowSource.Emby -> {
                 scope.launch {
                     val items: List<CardItem> = when (src.kind) {
@@ -529,6 +561,52 @@ class AppModel(private val activity: MainActivity) {
                     } else null,
                 )
             }
+    }
+
+    /**
+     * New episodes of shows you follow (in your Stremio library, notifications on): anything
+     * that aired since you last watched the show, within the last 30 days. Checked every 3 hours.
+     */
+    private suspend fun loadNewEpisodes(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && now - newEpisodesAt < 3 * 3_600_000L) return
+        newEpisodesAt = now
+        val followed = library
+            .filter { it.type == "series" && !it.removed && !it.temp && !it.noNotif }
+            .sortedByDescending { maxOf(it.mtime, it.lastWatched) }
+            .take(60)
+        if (followed.isEmpty()) return
+        val cutoff = now - 30L * 24 * 3_600_000
+        val gate = kotlinx.coroutines.sync.Semaphore(4)
+        val found = followed.map { e ->
+            scope.async {
+                gate.acquire()
+                try {
+                    val meta = Repo.meta("series", e.id) ?: return@async null
+                    val since = maxOf(e.lastWatched, cutoff)
+                    val fresh = sortedEpisodes(meta).filter {
+                        it.season > 0 && it.released in (since + 1)..now && !watched(meta.id, it.id)
+                    }
+                    val first = fresh.firstOrNull() ?: return@async null
+                    Triple(meta, first, fresh)
+                } finally {
+                    gate.release()
+                }
+            }
+        }.awaitAll().filterNotNull()
+        newEpisodes = found
+            .sortedByDescending { (_, _, fresh) -> fresh.maxOf { it.released } }
+            .map { (meta, first, fresh) ->
+                CardItem(
+                    meta = meta,
+                    videoId = first.id,
+                    badge = if (fresh.size > 1) "${fresh.size} NEW EPISODES" else "NEW · ${first.label}",
+                )
+            }
+        browse.values.filter { it.withContinue }.forEach { b ->
+            b.rowItems["new-eps"] = newEpisodes
+            b.loaded["new-eps"] = true
+        }
     }
 
     fun refreshContinue() {
@@ -916,6 +994,113 @@ class AppModel(private val activity: MainActivity) {
                 updateProgress = -1f
             }
         }
+    }
+
+    // ---------------- Trakt sign-in ----------------
+
+    fun startTraktAuth() {
+        traktJob?.cancel()
+        traktCode = null
+        traktStatus = "Getting a code from Trakt…"
+        traktJob = scope.launch {
+            val dc = com.maxim.marquee.data.Trakt.deviceCode()
+            if (dc == null) {
+                traktStatus = "Couldn't reach Trakt. Check the Client ID and Secret (Settings → Set up from your phone)."
+                return@launch
+            }
+            traktCode = dc
+            traktStatus = "Waiting for you to approve…"
+            var interval = dc.interval.coerceAtLeast(2)
+            val end = System.currentTimeMillis() + dc.expiresIn * 1000L
+            while (System.currentTimeMillis() < end) {
+                delay(interval * 1000L)
+                when (com.maxim.marquee.data.Trakt.pollDevice(dc)) {
+                    "ok" -> {
+                        traktStatus = "Connected"
+                        toast("Trakt connected")
+                        rebuildRows(force = true)
+                        if (stack.lastOrNull() is Screen.TraktActivate) back()
+                        return@launch
+                    }
+                    "slow" -> interval += 1
+                    "pending" -> Unit
+                    "denied" -> { traktStatus = "Access was denied on Trakt."; return@launch }
+                    "expired" -> { traktStatus = "The code expired. Go back and try again."; return@launch }
+                    else -> { traktStatus = "Trakt rejected the request. Check the Client Secret."; return@launch }
+                }
+            }
+            traktStatus = "The code expired. Go back and try again."
+        }
+    }
+
+    fun cancelTraktAuth() {
+        traktJob?.cancel()
+    }
+
+    fun traktSignOut() {
+        Store.traktSignOut()
+        rebuildRows(force = true)
+    }
+
+    // ---------------- phone setup ----------------
+
+    /** Applies what was entered on the phone; returns a summary shown on the phone. */
+    suspend fun applySetup(form: Map<String, String>): String {
+        val lines = mutableListOf<String>()
+        fun v(k: String) = form[k]?.trim()?.takeIf { it.isNotEmpty() }
+        val email = v("stremio_email"); val pw = form["stremio_password"]
+        if (email != null && !pw.isNullOrEmpty()) {
+            try {
+                Store.authKey = StremioApi.login(email, pw)
+                Store.email = email
+                loggedIn = true
+                start()
+                lines += "✓ Stremio: signed in as $email"
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lines += "✗ Stremio: ${e.message}"
+            }
+        }
+        val server = v("emby_server"); val user = v("emby_user")
+        if (server != null && user != null) {
+            try {
+                com.maxim.marquee.data.Emby.login(server, user, form["emby_password"] ?: "")
+                loadEmbyLibraries()
+                rebuildRows(force = true)
+                if (loggedIn) loadLibrary()
+                lines += "✓ Emby: connected as $user"
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lines += "✗ Emby: ${e.message}"
+            }
+        }
+        v("tmdb_key")?.let { Store.tmdbKey = it; lines += "✓ TMDB key saved (collections on movie pages)" }
+        val tid = v("trakt_id"); val tsec = v("trakt_secret")
+        if (tid != null && tsec != null) {
+            Store.traktClientId = tid
+            Store.traktSecret = tsec
+            lines += "✓ Trakt keys saved. Approve the code now showing on your TV."
+            if (loggedIn) {
+                stack.add(Screen.TraktActivate)
+                startTraktAuth()
+            }
+        }
+        if (lines.isEmpty()) lines += "Nothing to set up: fill in at least one section."
+        return lines.joinToString("\n")
+    }
+
+    // ---------------- More Like This / collections ----------------
+
+    suspend fun relatedFor(meta: MetaItem): List<MetaItem> {
+        if (com.maxim.marquee.data.Emby.isEmby(meta.id)) return emptyList()
+        val fromTrakt = com.maxim.marquee.data.Trakt.related(meta.type, meta.id)
+        val list = if (fromTrakt.isNotEmpty()) fromTrakt else {
+            val genre = meta.genres.firstOrNull() ?: return emptyList()
+            Repo.genreCatalog(meta.type, genre)
+        }
+        return list.filter { it.id != meta.id }.distinctBy { it.id }.take(24)
     }
 
     fun voiceSearch() {

@@ -104,6 +104,20 @@ object Repo {
         return withContext(Dispatchers.Default) { o.arr("metas").objects().mapNotNull { MetaItem.parse(it, c.type) } }
     }
 
+    /** Titles from the first catalog that can filter by this genre (used for "More Like This"). */
+    suspend fun genreCatalog(type: String, genre: String): List<MetaItem> {
+        for (a in addons) {
+            val c = a.catalogs.firstOrNull { c ->
+                c.type == type && c.extras.any { it.name == "genre" } && c.extras.none { it.isRequired && it.name != "genre" }
+            } ?: continue
+            val items = Http.getMapped("${a.base}/catalog/${c.type}/${enc(c.id)}/genre=${enc(genre).replace(":", "%3A")}.json") { o ->
+                o.arr("metas").objects().mapNotNull { MetaItem.parse(it, c.type) }
+            } ?: continue
+            if (items.isNotEmpty()) return items
+        }
+        return emptyList()
+    }
+
     fun cachedMeta(type: String, id: String): MetaItem? = metaCache.get("$type/$id")
 
     suspend fun meta(type: String, id: String): MetaItem? {

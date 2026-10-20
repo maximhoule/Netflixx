@@ -83,7 +83,7 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
     }
 
     Box(Modifier.fillMaxSize().background(C.Bg)) {
-        Backdrop(meta.background ?: s.preview.background, Modifier.align(Alignment.TopEnd).fillMaxWidth(0.78f).fillMaxHeight())
+        Backdrop(meta.background ?: s.preview.backdropUrl, Modifier.align(Alignment.TopEnd).fillMaxWidth(0.78f).fillMaxHeight())
         Column(
             Modifier
                 .fillMaxSize()

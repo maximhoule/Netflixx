@@ -282,7 +282,7 @@ private fun ExpandedPreview(item: CardItem, modifier: Modifier) {
     }
     val m = full ?: m0
     Box(modifier.background(C.Surface)) {
-        val bg = m.background ?: m0.background
+        val bg = m.background ?: m0.backdropUrl
         if (bg != null) {
             AsyncImage(bg, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }

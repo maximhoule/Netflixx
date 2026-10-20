@@ -146,6 +146,15 @@ data class MetaItem(
     /** The title's logo artwork: the addon's, or the community artwork for IMDb titles. */
     val logoUrl: String? get() = logo ?: if (id.startsWith("tt")) "https://images.metahub.space/logo/medium/${id.substringBefore(':')}/img" else null
 
+    /**
+     * Wide artwork for the billboard and expanded cards: the addon's backdrop, a landscape
+     * thumbnail (sports / live TV), or the community backdrop for IMDb titles.
+     */
+    val backdropUrl: String?
+        get() = background
+            ?: poster.takeIf { posterShape.equals("landscape", true) }
+            ?: if (id.startsWith("tt")) "https://images.metahub.space/background/medium/${id.substringBefore(':')}/img" else null
+
     /** Number of real seasons (specials excluded). */
     val seasonCount: Int get() = videos.map { it.season }.filter { it > 0 }.distinct().size
 

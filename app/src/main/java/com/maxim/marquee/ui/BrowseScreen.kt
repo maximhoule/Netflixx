@@ -216,7 +216,7 @@ fun BrowseScreen(model: AppModel, b: BrowseState) {
 @Composable
 private fun HeroBackdrop(model: AppModel, b: BrowseState, modifier: Modifier) {
     val hero = b.hero
-    val bg = b.heroMeta?.background ?: hero?.meta?.background
+    val bg = b.heroMeta?.background ?: hero?.meta?.backdropUrl
     // Trailer behind the billboard once you rest on a title for a couple of seconds.
     val trailersOn = Store.trailerMode != 0
     val ytId = b.heroMeta?.trailer

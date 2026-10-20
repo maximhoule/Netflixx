@@ -685,7 +685,7 @@ class AppModel(private val activity: MainActivity) {
             val m = c.meta
             scope.launch {
                 val full = Repo.cachedMeta(m.type, m.id) ?: Repo.meta(m.type, m.id) ?: return@launch
-                (full.background ?: m.background)?.let { bg -> imageLoader.enqueue(com.maxim.marquee.ui.backdropRequest(activity, bg)) }
+                (full.background ?: m.backdropUrl)?.let { bg -> imageLoader.enqueue(com.maxim.marquee.ui.backdropRequest(activity, bg)) }
             }
         }
     }

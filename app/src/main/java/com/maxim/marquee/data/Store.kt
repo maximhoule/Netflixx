@@ -39,8 +39,13 @@ object Store {
     /** Avatar colours, Netflix-style. */
     val profileColors = listOf(0xFFE21B2D, 0xFF2E7DF6, 0xFFF5B50E, 0xFF22A35A, 0xFF8E44D9, 0xFFEE6A1F, 0xFF16A6B8).map { it.toInt() }
 
+    @Volatile private var profilesCache: List<Profile>? = null
+
     val profiles: List<Profile>
-        get() {
+        get() = profilesCache ?: readProfiles().also { profilesCache = it }
+
+    private fun readProfiles(): List<Profile> {
+        run {
             val arr = safe { org.json.JSONArray(global.getString("profiles", null) ?: "[]") } ?: org.json.JSONArray()
             val list = arr.objects().mapNotNull { o ->
                 val id = o.int("id") ?: return@mapNotNull null
@@ -48,17 +53,15 @@ object Store {
             }
             return list.ifEmpty { listOf(Profile(0, defaultName(), profileColors[0])) }
         }
-
-    private fun defaultName(): String {
-        val email = prefsFor(0).getString("email", null) ?: return "Me"
-        val local = email.substringBefore('@').takeWhile { it.isLetter() }
-        return if (local.length in 2..12) local.replaceFirstChar { it.uppercase() } else "Me"
     }
+
+    private fun defaultName(): String = "Me"
 
     private fun saveProfiles(list: List<Profile>) {
         val arr = org.json.JSONArray()
         list.forEach { arr.put(JSONObject().put("id", it.id).put("name", it.name).put("color", it.color)) }
         global.edit().putString("profiles", arr.toString()).apply()
+        profilesCache = list
     }
 
     var activeProfileId: Int
@@ -89,6 +92,27 @@ object Store {
         activeProfileId = id
         prefs = prefsFor(id)
         synchronized(lock) { cache = null }
+    }
+
+    // ---- last known Stremio library, so Continue Watching shows instantly on launch ----
+
+    private fun libraryFile() = java.io.File(appCtx.filesDir, "library_$activeProfileId.json")
+
+    fun saveLibraryCache(json: String) {
+        safe {
+            val f = libraryFile()
+            val tmp = java.io.File(f.path + ".tmp")
+            tmp.writeText(json)
+            tmp.renameTo(f)
+        }
+    }
+
+    fun loadLibraryCache(): String? = safe { libraryFile().takeIf { it.exists() }?.readText() }
+
+    /** Reads saved progress into memory ahead of time (off the main thread). */
+    fun warmUp() {
+        synchronized(lock) { loaded() }
+        profiles
     }
 
     /** Raw addon list stored by another profile (for "copy addons"). */
@@ -196,6 +220,10 @@ object Store {
     var embyUserName: String?
         get() = string("embyUserName")
         set(v) = setString("embyUserName", v)
+    /** Last known Emby libraries (so Home's rows don't rebuild when the server answers). */
+    var embyLibrariesJson: String?
+        get() = string("embyLibraries")
+        set(v) = setString("embyLibraries", v)
     val deviceId: String
         get() = globalString("deviceId") ?: java.util.UUID.randomUUID().toString().also { setGlobalString("deviceId", it) }
 
@@ -225,7 +253,7 @@ object Store {
     }
 
     fun embySignOut() {
-        prefs.edit().remove("embyServer").remove("embyToken").remove("embyUserId").remove("embyUserName").apply()
+        prefs.edit().remove("embyServer").remove("embyToken").remove("embyUserId").remove("embyUserName").remove("embyLibraries").apply()
     }
 
     fun signOut() {

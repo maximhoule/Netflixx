@@ -237,12 +237,24 @@ class AppModel(private val activity: MainActivity) {
         started = true
         if (!loggedIn) return
         online = Net.online(activity)
-        Repo.loadCachedAddons()
-        addonCount = Repo.addons.size
-        rebuildRows()
         scope.launch {
+            // Show last session's addons, rows and Continue Watching straight away (no network),
+            // then refresh everything in the background.
+            Repo.loadCachedAddonsAsync()
+            addonCount = Repo.addons.size
+            if (embyLibraries.isEmpty()) embyLibraries = savedEmbyLibraries()
+            rebuildRows()
+            if (library.isEmpty()) {
+                val saved = Repo.cachedLibrary()
+                if (library.isEmpty() && saved.isNotEmpty()) {
+                    library = saved
+                    refreshContinue()
+                }
+            }
             syncing = true
             addonError = null
+            // Create the trailer player now, while Home is loading, not later in the middle of browsing.
+            if (Store.trailerMode != 0) scope.launch { delay(600); trailer }
             try {
                 Repo.refreshAddons()
             } catch (e: CancellationException) {
@@ -259,8 +271,33 @@ class AppModel(private val activity: MainActivity) {
     }
 
     private suspend fun loadEmbyLibraries() {
-        embyLibraries = if (com.maxim.marquee.data.Emby.connected) com.maxim.marquee.data.Emby.libraries() else emptyList()
-        if (com.maxim.marquee.data.Emby.connected) com.maxim.marquee.data.Emby.buildIndex(force = true)
+        val emby = com.maxim.marquee.data.Emby
+        if (!emby.connected) {
+            embyLibraries = emptyList(); return
+        }
+        val libs = emby.libraries()
+        // An unreachable server answers nothing: keep the rows we already have.
+        if (libs.isNotEmpty() || embyLibraries.isEmpty()) {
+            embyLibraries = libs
+            Store.embyLibrariesJson = org.json.JSONArray().apply {
+                libs.forEach { put(org.json.JSONObject().put("id", it.id).put("name", it.name).put("type", it.type ?: "")) }
+            }.toString()
+        }
+        emby.buildIndex(force = true)
+    }
+
+    /** Emby libraries as they were last time, so the first layout of Home already has their rows. */
+    private fun savedEmbyLibraries(): List<com.maxim.marquee.data.Emby.Library> {
+        if (!com.maxim.marquee.data.Emby.connected) return emptyList()
+        val json = Store.embyLibrariesJson ?: return emptyList()
+        return com.maxim.marquee.data.safe {
+            org.json.JSONArray(json).let { a ->
+                (0 until a.length()).map { i ->
+                    val o = a.getJSONObject(i)
+                    com.maxim.marquee.data.Emby.Library(o.getString("id"), o.getString("name"), o.optString("type").ifEmpty { null })
+                }
+            }
+        } ?: emptyList()
     }
 
     fun embyLogin(address: String, user: String, password: String, onError: (String) -> Unit) {
@@ -374,7 +411,7 @@ class AppModel(private val activity: MainActivity) {
 
     private suspend fun loadLibrary() {
         lastLibraryLoad = System.currentTimeMillis()
-        library = Repo.library()
+        Repo.library()?.let { library = it }
         refreshContinue()
         scope.launch { loadNewEpisodes() }
         if (com.maxim.marquee.data.Emby.connected) {
@@ -451,8 +488,17 @@ class AppModel(private val activity: MainActivity) {
         }
     }
 
-    fun loadRow(b: BrowseState, row: RowModel) {
+    /**
+     * Loads a row when it's about to show. Also loads the next couple of rows ahead of time (and
+     * their posters), so scrolling down never waits on the network.
+     */
+    fun loadRow(b: BrowseState, row: RowModel, readAhead: Boolean = true) {
+        if (readAhead) {
+            val i = b.rows.indexOfFirst { it.key == row.key }
+            if (i >= 0) b.rows.drop(i + 1).take(2).forEach { loadRow(b, it, readAhead = false) }
+        }
         if (b.loaded[row.key] == true || !b.requested.add(row.key)) return
+        val preloadPosters = !readAhead
         when (val src = row.source) {
             is RowSource.Continue -> {
                 b.rowItems[row.key] = continueItems(); b.loaded[row.key] = true; afterRowLoaded(b)
@@ -496,10 +542,27 @@ class AppModel(private val activity: MainActivity) {
             is RowSource.Cat -> {
                 scope.launch {
                     val parts = listOf(src.addon to src.catalog) + src.more
-                    val items = parts.map { (a, c) -> async { Repo.catalog(a, c) } }.awaitAll()
-                        .flatten().distinctBy { it.id }.map { CardItem(it) }
-                    b.rowItems[row.key] = items
-                    b.loaded[row.key] = true
+                    // 1. Last session's copy from disk: the row appears instantly.
+                    val cached = parts.map { (a, c) -> async { Repo.catalog(a, c, cachedOnly = true) } }.awaitAll()
+                        .flatten().distinctBy { it.id }
+                    if (cached.isNotEmpty() && b.loaded[row.key] != true) {
+                        b.rowItems[row.key] = cached.map { CardItem(it) }
+                        b.loaded[row.key] = true
+                        afterRowLoaded(b)
+                        if (preloadPosters) preloadPosters(cached)
+                    }
+                    // 2. Fresh copy from the addon. Swapped in unless you're browsing that row right now.
+                    val fresh = parts.map { (a, c) -> async { Repo.catalog(a, c) } }.awaitAll()
+                        .flatten().distinctBy { it.id }
+                    val browsingRow = b.lastFocusKey?.startsWith(row.key + "#") == true
+                    if (fresh.isNotEmpty() && fresh.map { it.id } != cached.map { it.id } && (cached.isEmpty() || !browsingRow)) {
+                        b.rowItems[row.key] = fresh.map { CardItem(it) }
+                        if (preloadPosters) preloadPosters(fresh)
+                    }
+                    if (b.loaded[row.key] != true) {
+                        b.rowItems[row.key] = fresh.map { CardItem(it) }
+                        b.loaded[row.key] = true
+                    }
                     afterRowLoaded(b)
                 }
             }
@@ -555,16 +618,44 @@ class AppModel(private val activity: MainActivity) {
 
     private var heroDebounce: Job? = null
 
+    private val imageLoader by lazy { coil.Coil.imageLoader(activity) }
+
+    /** Downloads the first posters of a row that isn't on screen yet, at the size they'll be shown. */
+    private fun preloadPosters(items: List<MetaItem>) {
+        val d = activity.resources.displayMetrics.density
+        val w = (118 * d).toInt(); val h = (177 * d).toInt()
+        items.take(8).forEach { m ->
+            val url = m.poster ?: return@forEach
+            imageLoader.enqueue(coil.request.ImageRequest.Builder(activity).data(url).size(w, h).build())
+        }
+    }
+
+    /** Get the details and backdrops of the next titles in a row ready, so the billboard switches instantly. */
+    private fun prefetchAround(b: BrowseState, key: String) {
+        val rowKey = key.substringBeforeLast('#')
+        val i = key.substringAfterLast('#').toIntOrNull() ?: return
+        val items = b.rowItems[rowKey] ?: return
+        items.drop(i + 1).take(2).forEach { c ->
+            val m = c.meta
+            scope.launch {
+                val full = Repo.cachedMeta(m.type, m.id) ?: Repo.meta(m.type, m.id) ?: return@launch
+                (full.background ?: m.background)?.let { bg -> imageLoader.enqueue(com.maxim.marquee.ui.backdropRequest(activity, bg)) }
+            }
+        }
+    }
+
     fun onCardFocus(b: BrowseState, key: String, item: CardItem) {
         b.lastFocusKey = key
         heroDebounce?.cancel()
         heroDebounce = scope.launch {
             delay(140)
             setHero(b, item)
+            delay(250)
+            prefetchAround(b, key)
             // Resting on a Continue Watching tile: get its sources ready.
             val vid = item.videoId
             if (vid != null && !(item.meta.type == "series" && vid == item.meta.id)) {
-                delay(700)
+                delay(450)
                 prefetch(item.meta.type, vid)
             }
         }
@@ -578,7 +669,6 @@ class AppModel(private val activity: MainActivity) {
         b.heroMeta = cached
         if (cached == null) {
             b.heroJob = scope.launch {
-                delay(120)
                 val m = Repo.meta(item.meta.type, item.meta.id)
                 if (b.hero?.meta?.id == item.meta.id) b.heroMeta = m
             }
@@ -671,8 +761,13 @@ class AppModel(private val activity: MainActivity) {
      * that aired since you last watched the show, within the last 30 days. Checked every 3 hours.
      */
     private suspend fun loadNewEpisodes(force: Boolean = false) {
+        if (!force && System.currentTimeMillis() - newEpisodesAt < 3 * 3_600_000L) return
+        // First check of the session waits until Home has loaded, so it doesn't compete with it.
+        if (newEpisodesAt == 0L) {
+            newEpisodesAt = System.currentTimeMillis()
+            delay(5_000)
+        }
         val now = System.currentTimeMillis()
-        if (!force && now - newEpisodesAt < 3 * 3_600_000L) return
         newEpisodesAt = now
         val followed = library
             .filter { it.type == "series" && !it.removed && !it.temp && !it.noNotif }
@@ -685,7 +780,7 @@ class AppModel(private val activity: MainActivity) {
             scope.async {
                 gate.acquire()
                 try {
-                    val meta = Repo.meta("series", e.id) ?: return@async null
+                    val meta = Repo.meta("series", e.id, fresh = true) ?: return@async null
                     val since = maxOf(e.lastWatched, cutoff)
                     val fresh = sortedEpisodes(meta).filter {
                         it.season > 0 && it.released in (since + 1)..now && !watched(meta.id, it.id)

@@ -15,6 +15,7 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -174,50 +175,13 @@ fun BrowseScreen(model: AppModel, b: BrowseState) {
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val heroH = maxHeight * 0.48f
-        val hero = b.hero
-        val bg = b.heroMeta?.background ?: hero?.meta?.background
-        // Trailer behind the billboard once you rest on a title for a couple of seconds.
-        val trailersOn = Store.trailerMode != 0
-        val ytId = b.heroMeta?.trailer
-        LaunchedEffect(ytId, hero?.meta?.id, trailersOn) {
-            if (!trailersOn) return@LaunchedEffect
-            val tp = model.trailer
-            tp.stop()
-            if (ytId == null) return@LaunchedEffect
-            delay(2_200)
-            tp.play(ytId, muted = Store.trailerMode == 1)
-        }
-        DisposableEffect(Unit) { onDispose { model.stopTrailer() } }
-        val trailerLayer: (@Composable () -> Unit)? = if (trailersOn) {
-            { TrailerLayer(model) }
-        } else {
-            null
-        }
-        Backdrop(
-            bg,
-            Modifier.align(Alignment.TopEnd).fillMaxWidth(0.74f).height(maxHeight * 0.72f),
-            video = trailerLayer,
-        )
+        // The billboard lives in its own composables: changing title only redraws the billboard,
+        // never the rows below it.
+        HeroBackdrop(model, b, Modifier.align(Alignment.TopEnd).fillMaxWidth(0.74f).height(maxHeight * 0.72f))
 
         Column(Modifier.fillMaxSize().padding(start = RAIL + 12.dp)) {
             Box(Modifier.fillMaxWidth().height(heroH)) {
-                if (hero != null) {
-                    val m = b.heroMeta ?: hero.meta
-                    val extras = rememberExtras(m)
-                    Column(
-                        Modifier.align(Alignment.BottomStart).padding(start = 14.dp, bottom = 14.dp).width(620.dp),
-                    ) {
-                        TitleArt(m, big = true, extraLogo = extras?.logo)
-                        Spacer(Modifier.height(12.dp))
-                        InfoRow(m, extras?.certification, leading = hero.badge ?: model.ribbonFor(m))
-                        m.description?.let {
-                            Spacer(Modifier.height(8.dp))
-                            Text(it, color = Color(0xFFE6E6E6), fontSize = 15.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, lineHeight = 21.sp)
-                        }
-                    }
-                } else if (model.addonError == null) {
-                    SkeletonHero(Modifier.align(Alignment.BottomStart).padding(start = 14.dp, bottom = 14.dp))
-                }
+                HeroInfo(model, b)
             }
 
             val hasCatalogs = b.rows.any { it.source !is RowSource.Continue && it.source !is RowSource.NewEpisodes }
@@ -246,6 +210,52 @@ fun BrowseScreen(model: AppModel, b: BrowseState) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun HeroBackdrop(model: AppModel, b: BrowseState, modifier: Modifier) {
+    val hero = b.hero
+    val bg = b.heroMeta?.background ?: hero?.meta?.background
+    // Trailer behind the billboard once you rest on a title for a couple of seconds.
+    val trailersOn = Store.trailerMode != 0
+    val ytId = b.heroMeta?.trailer
+    LaunchedEffect(ytId, hero?.meta?.id, trailersOn) {
+        if (!trailersOn) return@LaunchedEffect
+        val tp = model.trailer
+        tp.stop()
+        if (ytId == null) return@LaunchedEffect
+        delay(2_200)
+        tp.play(ytId, muted = Store.trailerMode == 1)
+    }
+    DisposableEffect(Unit) { onDispose { model.stopTrailer() } }
+    val trailerLayer: (@Composable () -> Unit)? = if (trailersOn) {
+        { TrailerLayer(model) }
+    } else {
+        null
+    }
+    Backdrop(bg, modifier, video = trailerLayer)
+}
+
+@Composable
+private fun BoxScope.HeroInfo(model: AppModel, b: BrowseState) {
+    val hero = b.hero
+    if (hero != null) {
+        val m = b.heroMeta ?: hero.meta
+        val extras = rememberExtras(m)
+        Column(
+            Modifier.align(Alignment.BottomStart).padding(start = 14.dp, bottom = 14.dp).width(620.dp),
+        ) {
+            TitleArt(m, big = true, extraLogo = extras?.logo)
+            Spacer(Modifier.height(12.dp))
+            InfoRow(m, extras?.certification, leading = hero.badge ?: model.ribbonFor(m))
+            m.description?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, color = Color(0xFFE6E6E6), fontSize = 15.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, lineHeight = 21.sp)
+            }
+        }
+    } else if (model.addonError == null) {
+        SkeletonHero(Modifier.align(Alignment.BottomStart).padding(start = 14.dp, bottom = 14.dp))
     }
 }
 

@@ -70,15 +70,19 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {
             // keep default
         }
-        model.av1Hardware = try {
-            android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
-                !info.isEncoder && info.supportedTypes.any { it.equals("video/av01", true) } &&
-                    if (Build.VERSION.SDK_INT >= 29) info.isHardwareAccelerated
-                    else !info.name.startsWith("OMX.google.") && !info.name.startsWith("c2.android.")
+        // Listing the TV's video decoders is slow: do it off the main thread so the app opens at once.
+        Thread {
+            val av1 = try {
+                android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
+                    !info.isEncoder && info.supportedTypes.any { it.equals("video/av01", true) } &&
+                        if (Build.VERSION.SDK_INT >= 29) info.isHardwareAccelerated
+                        else !info.name.startsWith("OMX.google.") && !info.name.startsWith("c2.android.")
+                }
+            } catch (e: Exception) {
+                false
             }
-        } catch (e: Exception) {
-            false
-        }
+            runOnUiThread { model.av1Hardware = av1 }
+        }.start()
         setContent { AppRoot(model) { finish() } }
         // "Who's watching?" when the app opens and there's more than one profile.
         if (!profileChosen && com.maxim.marquee.data.Store.profiles.size > 1) {

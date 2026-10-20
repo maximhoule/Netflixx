@@ -31,7 +31,7 @@ object Tmdb {
     data class Collection(val name: String, val items: List<MetaItem>)
 
     /** Age rating and logo artwork for a title. */
-    data class Extras(val certification: String?, val logo: String?)
+    data class Extras(val certification: String?, val logo: String?, val trailers: List<String> = emptyList())
 
     private val extrasCache = android.util.LruCache<String, Extras>(300)
 
@@ -47,8 +47,8 @@ object Tmdb {
         val id = found.arr(if (tv) "tv_results" else "movie_results").objects().firstOrNull()?.long("id")
             ?: found.arr(if (tv) "movie_results" else "tv_results").objects().firstOrNull()?.long("id")
             ?: return null
-        val o = if (tv) get("/tv/$id?append_to_response=content_ratings,images&include_image_language=en,null")
-        else get("/movie/$id?append_to_response=release_dates,images&include_image_language=en,null")
+        val o = if (tv) get("/tv/$id?append_to_response=content_ratings,images,videos&include_image_language=en,null")
+        else get("/movie/$id?append_to_response=release_dates,images,videos&include_image_language=en,null")
         o ?: return null
         val countries = listOf(java.util.Locale.getDefault().country.ifBlank { "US" }, "US").distinct()
         val cert = countries.firstNotNullOfOrNull { cc ->
@@ -62,7 +62,10 @@ object Tmdb {
         val logos = o.obj("images")?.arr("logos").objects()
         val logo = (logos.firstOrNull { it.str("iso_639_1") == "en" } ?: logos.firstOrNull())
             ?.str("file_path")?.let { "https://image.tmdb.org/t/p/w500$it" }
-        return Extras(cert, logo).also { extrasCache.put(tt, it) }
+        val videos = o.obj("videos")?.arr("results").objects().filter { it.str("site") == "YouTube" }
+        val trailers = (videos.filter { it.str("type") == "Trailer" } + videos.filter { it.str("type") == "Teaser" })
+            .mapNotNull { it.str("key") }.distinct()
+        return Extras(cert, logo, trailers).also { extrasCache.put(tt, it) }
     }
 
     /** The franchise a movie belongs to, in release order, or null. */

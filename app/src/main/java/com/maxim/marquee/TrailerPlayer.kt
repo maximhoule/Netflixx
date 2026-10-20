@@ -41,7 +41,14 @@ class TrailerPlayer(ctx: Context) {
             isFocusable = false
             isFocusableInTouchMode = false
             descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
-            webChromeClient = WebChromeClient()
+            webChromeClient = object : WebChromeClient() {
+                override fun onConsoleMessage(m: android.webkit.ConsoleMessage): Boolean {
+                    if (m.messageLevel() == android.webkit.ConsoleMessage.MessageLevel.ERROR) {
+                        android.util.Log.w("Marquee", "trailer page: ${m.message()}")
+                    }
+                    return true
+                }
+            }
             addJavascriptInterface(Bridge(), "Android")
             // YouTube's embedded player requires the page to identify the app (HTTP Referer).
             loadDataWithBaseURL("https://com.maxim.marquee", HTML, "text/html", "utf-8", null)
@@ -50,13 +57,20 @@ class TrailerPlayer(ctx: Context) {
         null
     }
 
-    fun play(youtubeId: String, muted: Boolean) {
+    /**
+     * Plays the first of [youtubeIds] that YouTube lets us embed (studios often block embedding
+     * of their uploads, so the next one is tried automatically).
+     */
+    fun play(youtubeIds: List<String>, muted: Boolean) {
         val v = view ?: return
-        if (currentId == youtubeId) return
-        currentId = youtubeId
+        val ids = youtubeIds.map { id -> id.filter { it.isLetterOrDigit() || it == '-' || it == '_' } }.filter { it.isNotEmpty() }.distinct()
+        if (ids.isEmpty()) return
+        val key = ids.joinToString(",")
+        if (currentId == key) return
+        currentId = key
         playing = false
-        val id = youtubeId.filter { it.isLetterOrDigit() || it == '-' || it == '_' }
-        v.evaluateJavascript("playTrailer('$id', $muted)", null)
+        val arr = ids.joinToString(",", "[", "]") { "'$it'" }
+        v.evaluateJavascript("playList($arr, $muted)", null)
     }
 
     fun stop() {
@@ -85,7 +99,14 @@ class TrailerPlayer(ctx: Context) {
 
     private inner class Bridge {
         @JavascriptInterface
+        fun onError(code: Int, id: String) {
+            // 2 bad id · 5 HTML5 error · 100 removed/private · 101/150 embedding not allowed · 153 missing referrer
+            android.util.Log.w("Marquee", "trailer $id can't play here (YouTube error $code)")
+        }
+
+        @JavascriptInterface
         fun onState(state: Int) {
+            if (state == 1) android.util.Log.i("Marquee", "trailer playing")
             // 1 = playing; anything else (buffering, ended, error) hides the video.
             main.post { if (currentId != null) playing = state == 1 }
         }
@@ -108,17 +129,21 @@ function onYouTubeIframeAPIReady(){
   player=new YT.Player('p',{width:'100%',height:'100%',
     playerVars:{autoplay:1,controls:0,disablekb:1,fs:0,iv_load_policy:3,modestbranding:1,rel:0,playsinline:1,mute:1,cc_load_policy:0,origin:'https://com.maxim.marquee'},
     events:{
-      onReady:function(){ready=true; if(pending){var q=pending; pending=null; playTrailer(q[0],q[1]);}},
+      onReady:function(){ready=true; if(pending){var q=pending; pending=null; playList(q[0],q[1]);}},
       onStateChange:function(e){ Android.onState(e.data); if(e.data===0){player.seekTo(4); player.playVideo();} },
-      onError:function(){ Android.onState(-2); }
+      onError:function(e){ Android.onError(e.data, list[idx]||''); next(); }
     }});
 }
-function playTrailer(id,muted){
-  if(!ready){pending=[id,muted]; return;}
-  if(muted){player.mute();}else{player.unMute(); player.setVolume(70);}
-  player.loadVideoById({videoId:id,startSeconds:4,suggestedQuality:'hd720'});
+var list=[], idx=0, wantMuted=true;
+function playList(ids,muted){ list=ids; idx=0; wantMuted=muted; start(); }
+function start(){
+  if(!ready){pending=[list,wantMuted]; return;}
+  if(idx>=list.length){ Android.onState(-2); return; }
+  if(wantMuted){player.mute();}else{player.unMute(); player.setVolume(70);}
+  player.loadVideoById({videoId:list[idx],startSeconds:4,suggestedQuality:'hd720'});
 }
-function stopTrailer(){ pending=null; if(ready){player.stopVideo();} }
+function next(){ idx++; if(idx<list.length){ start(); } else { Android.onState(-2); } }
+function stopTrailer(){ pending=null; list=[]; if(ready){player.stopVideo();} }
 </script></body></html>"""
     }
 }

@@ -134,6 +134,8 @@ data class MetaItem(
     val defaultVideoId: String? = null,
     /** YouTube id of a trailer, when the metadata addon provides one. */
     val trailer: String? = null,
+    /** Every trailer/teaser YouTube id known, best first (some can't be embedded, so there are fallbacks). */
+    val trailers: List<String> = listOfNotNull(trailer),
     /** "poster" (2:3), "landscape" (16:9) or "square", as declared by the addon. */
     val posterShape: String? = null,
     /** Age rating ("TV-MA", "PG-13", "14A"…) when known. */
@@ -162,6 +164,12 @@ data class MetaItem(
         fun parse(o: JSONObject, fallbackType: String? = null): MetaItem? {
             val id = o.str("id") ?: o.str("imdb_id") ?: return null
             val name = o.str("name") ?: o.str("title") ?: return null
+            val legacy = o.arr("trailers").objects()
+            val yt = (
+                o.arr("trailerStreams").objects().mapNotNull { it.str("ytId") } +
+                    legacy.filter { (it.str("type") ?: "Trailer") == "Trailer" }.mapNotNull { it.str("source") } +
+                    legacy.mapNotNull { it.str("source") }
+                ).filter { it.length in 6..20 }.distinct()
             return MetaItem(
                 id = id,
                 type = o.str("type") ?: fallbackType ?: "movie",
@@ -177,8 +185,8 @@ data class MetaItem(
                 cast = o.arr("cast").strings(),
                 videos = o.arr("videos").objects().mapNotNull { Video.parse(it) },
                 defaultVideoId = o.obj("behaviorHints")?.str("defaultVideoId"),
-                trailer = o.arr("trailerStreams").objects().firstNotNullOfOrNull { it.str("ytId") }
-                    ?: o.arr("trailers").objects().firstOrNull { (it.str("type") ?: "Trailer") == "Trailer" }?.str("source"),
+                trailer = yt.firstOrNull(),
+                trailers = yt,
                 posterShape = o.str("posterShape"),
                 certification = o.str("certification") ?: o.str("ageRating"),
             )

@@ -227,14 +227,15 @@ private fun HeroBackdrop(model: AppModel, b: BrowseState, modifier: Modifier) {
     val bg = b.heroMeta?.background ?: hero?.meta?.backdropUrl
     // Trailer behind the billboard once you rest on a title for a couple of seconds.
     val trailersOn = Store.trailerMode != 0
-    val ytId = b.heroMeta?.trailer
-    LaunchedEffect(ytId, hero?.meta?.id, trailersOn) {
+    val heroMeta = b.heroMeta
+    val extras = heroMeta?.let { rememberExtras(it) }
+    val ids = (heroMeta?.trailers ?: emptyList()) + (extras?.trailers ?: emptyList())
+    LaunchedEffect(ids.joinToString(","), hero?.meta?.id, trailersOn) {
         if (!trailersOn) return@LaunchedEffect
         model.stopTrailer()
-        if (ytId == null) return@LaunchedEffect
+        if (ids.isEmpty()) return@LaunchedEffect
         delay(2_200)
-        // The trailer player is created here, the first time, while you're resting on a title.
-        model.trailer.play(ytId, muted = Store.trailerMode == 1)
+        model.trailer.play(ids, muted = Store.trailerMode == 1)
     }
     DisposableEffect(Unit) { onDispose { model.stopTrailer() } }
     val trailerLayer: (@Composable () -> Unit)? = if (trailersOn) {

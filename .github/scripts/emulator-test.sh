@@ -43,6 +43,8 @@ summary "== cold start (first ever: nothing saved yet)"
 adb shell am start -W -n $PKG/.MainActivity | grep -E "TotalTime" | tee -a "$OUT/summary.txt"
 sleep 3; shot start_3s
 sleep 15; shot home
+# Resting on the first title: its trailer should start behind the billboard after ~2 s.
+sleep 8; shot home_trailer
 
 summary "== browse rows"
 measure_start
@@ -149,7 +151,8 @@ else
 fi
 grep -E "ANR in $PKG" "$OUT/logcat.txt" | tee -a "$OUT/summary.txt" || true
 grep -E " Marquee *:" "$OUT/logcat.txt" > "$OUT/marquee_log.txt" || true
-summary "App log lines: $(wc -l < "$OUT/marquee_log.txt")"; grep -E "GET failed" "$OUT/marquee_log.txt" | head -20 | tee -a "$OUT/summary.txt"
+summary "App log lines: $(wc -l < "$OUT/marquee_log.txt")"
+grep -iE "trailer" "$OUT/marquee_log.txt" | head -20 | tee -a "$OUT/summary.txt"; grep -E "GET failed" "$OUT/marquee_log.txt" | head -20 | tee -a "$OUT/summary.txt"
 grep -E "ExoPlayerImplInternal|MediaCodecRenderer|AudioTrack|DefaultAudioSink" "$OUT/logcat.txt" | grep -E " E | W " | head -40 > "$OUT/player_errors.txt" || true
 summary "Player warnings/errors: $(wc -l < "$OUT/player_errors.txt")"; head -10 "$OUT/player_errors.txt" | tee -a "$OUT/summary.txt"
 grep -E "Long monitor contention|StrictMode|OutOfMemory|GC freed.*paused [0-9]{3,}" "$OUT/logcat.txt" | grep "$(adb shell pidof $PKG 2>/dev/null | tr -d '\r') " | head -10 | sed 's/^/contention: /' | tee -a "$OUT/summary.txt" || true

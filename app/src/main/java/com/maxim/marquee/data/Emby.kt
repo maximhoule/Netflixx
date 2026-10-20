@@ -212,6 +212,7 @@ object Emby {
             genres = o.arr("Genres").strings(),
             cast = o.arr("People").objects().filter { it.str("Type") == "Actor" }.mapNotNull { it.str("Name") },
             trailer = o.arr("RemoteTrailers").objects().firstNotNullOfOrNull { youtubeId(it.str("Url")) },
+            trailers = o.arr("RemoteTrailers").objects().mapNotNull { youtubeId(it.str("Url")) }.distinct(),
             posterShape = if (primaryAspect > 1.2) "landscape" else null,
             defaultVideoId = if (appType(o) == "movie") PREFIX + id else null,
             certification = o.str("OfficialRating"),

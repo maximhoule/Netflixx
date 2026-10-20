@@ -88,6 +88,10 @@ object Store {
         get() = prefs.getInt("subStyle", 0)
         set(v) = prefs.edit().putInt("subStyle", v).apply()
 
+    var autoUpdate: Boolean
+        get() = bool("autoUpdate", true)
+        set(v) = setBool("autoUpdate", v)
+
     /** Background trailers on the home billboard: 0 off, 1 muted, 2 with sound. */
     var trailerMode: Int
         get() = prefs.getInt("trailerMode", 1)

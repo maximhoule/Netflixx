@@ -51,6 +51,7 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
@@ -506,6 +507,12 @@ fun SettingsScreen(model: AppModel) {
                 model.stack.add(com.maxim.marquee.Screen.EmbyLogin)
             }
         }
+        SettingRow(
+            "Update automatically",
+            onOff(Store.autoUpdate),
+            "Checks every time you open Marquee · installed: build ${com.maxim.marquee.Updater.currentBuild(LocalContext.current)}",
+        ) { Store.autoUpdate = !Store.autoUpdate; version++ }
+        SettingRow("Check for updates now", "") { model.checkForUpdate(manual = true) }
         SettingRow("Signed in as", Store.email ?: "", "Select to sign out") { model.signOut() }
         Text(
             "Addons: " + Repo.addons.joinToString(", ") { it.name },
@@ -526,6 +533,24 @@ private fun SettingRow(title: String, value: String, hint: String? = null, fr: F
                 hint?.let { Text(it, color = if (f) Color(0xFF444444) else C.Dim, fontSize = 13.sp) }
             }
             Text(value, color = if (f) Color.Black else C.Dim, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+// ---------------------------------------------------------------- update banner
+
+@Composable
+fun UpdateBanner(text: String, progress: Float) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopEnd) {
+        Column(
+            Modifier.padding(top = 24.dp, end = 32.dp).width(360.dp)
+                .background(Color(0xF01A1A1A), RoundedCornerShape(8.dp)).padding(16.dp),
+        ) {
+            Text(text, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            if (progress >= 0f) {
+                Spacer(Modifier.height(10.dp))
+                ProgressLine(progress, Modifier.fillMaxWidth())
+            }
         }
     }
 }

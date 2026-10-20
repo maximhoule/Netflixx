@@ -237,6 +237,11 @@ fun CardMenuOverlay(model: AppModel) {
                     model.toggleMyList(meta); model.closeCardMenu()
                 }
             }
+            if (meta.type == "series" || meta.type == "movie") {
+                options += (if (meta.type == "series") "Mark show as watched" else "Mark as watched") to {
+                    model.markWatched(meta); model.closeCardMenu()
+                }
+            }
             if (m.fromContinue) options += "Remove from Continue Watching" to { model.dismissContinue(m.item); model.closeCardMenu() }
             m.rowTitle?.takeIf { !m.fromContinue }?.let { title ->
                 options += "Hide the \"$title\" row" to { model.closeCardMenu(); model.hideRow(title) }
@@ -530,6 +535,11 @@ fun SettingsScreen(model: AppModel) {
                 "Connected · ${Store.embyUserName ?: ""}",
                 (Store.embyServer ?: "") + " — select to disconnect",
             ) { model.embySignOut(); version++ }
+            SettingRow(
+                "Emby rows",
+                when (Store.embyRows) { 1 -> "Series & Movies tabs"; 2 -> "Everywhere"; else -> "Off" },
+                "\"New in …\" rows from your server. Its titles are always in Continue Watching, search and sources",
+            ) { model.setEmbyRows((Store.embyRows + 1) % 3); version++ }
         } else {
             SettingRow("Emby server", "Not connected", "Add your Emby (or Jellyfin) server to see its shows here") {
                 model.stack.add(com.maxim.marquee.Screen.EmbyLogin)

@@ -85,6 +85,7 @@ object Store {
         if (list.size <= 1) return
         saveProfiles(list.filterNot { it.id == id })
         prefsFor(id).edit().clear().apply()
+        synchronized(timeMaps) { timeMaps.keys.removeAll { it.startsWith("$id/") } }
         if (activeProfileId == id) switchProfile(list.first { it.id != id }.id)
     }
 
@@ -206,6 +207,38 @@ object Store {
     var hiddenRows: Set<String>
         get() = safe { org.json.JSONArray(string("hiddenRows") ?: "[]").strings().toSet() } ?: emptySet()
         set(v) = setString("hiddenRows", org.json.JSONArray(v.toList()).toString())
+
+    // Read often (every episode tile asks), so kept in memory per profile.
+    private val timeMaps = HashMap<String, Map<String, Long>>()
+
+    private fun timeMap(key: String): Map<String, Long> = synchronized(timeMaps) {
+        timeMaps.getOrPut("$activeProfileId/$key") {
+            safe {
+                val o = org.json.JSONObject(string(key) ?: "{}")
+                o.keys().asSequence().associateWith { o.optLong(it) }
+            } ?: emptyMap()
+        }
+    }
+
+    private fun putTime(key: String, id: String, t: Long) = synchronized(timeMaps) {
+        // Keep the newest 300 so the list can't grow forever.
+        val m = (timeMap(key) + (id to t)).entries.sortedByDescending { it.value }.take(300).associate { it.key to it.value }
+        timeMaps["$activeProfileId/$key"] = m
+        setString(key, org.json.JSONObject().apply { m.forEach { put(it.key, it.value) } }.toString())
+    }
+
+    /** Titles taken off Continue Watching, and when: they come back only if you watch them again after that. */
+    val continueHidden: Map<String, Long> get() = timeMap("continueHidden")
+    fun hideFromContinue(metaId: String) = putTime("continueHidden", metaId, System.currentTimeMillis())
+
+    /** Shows/movies you marked as watched, and when: every episode counts as watched unless played again after. */
+    val markedWatched: Map<String, Long> get() = timeMap("markedWatched")
+    fun markWatched(metaId: String) = putTime("markedWatched", metaId, System.currentTimeMillis())
+
+    /** Emby "New in …" rows: 0 off (default), 1 on the Series and Movies tabs, 2 everywhere. */
+    var embyRows: Int
+        get() = prefs.getInt("embyRows", 0)
+        set(v) = prefs.edit().putInt("embyRows", v).apply()
 
     /** Sports recap / highlight rows (hidden unless turned on). */
     var showRecaps: Boolean

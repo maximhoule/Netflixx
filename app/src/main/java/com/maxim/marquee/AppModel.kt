@@ -466,7 +466,7 @@ class AppModel(private val activity: MainActivity) {
     }
 
     private fun rebuildRows(force: Boolean = false) {
-        val sig = Repo.signature + "|" + embyLibraries.joinToString(",") { it.id }
+        val sig = Repo.signature + "|" + embyLibraries.joinToString(",") { it.id } + "|" + Store.embyRows
         browse.values.forEach { b ->
             if (!force && b.signature == sig && b.rows.isNotEmpty()) return@forEach
             val defs = mutableListOf<RowModel>()
@@ -497,15 +497,19 @@ class AppModel(private val activity: MainActivity) {
                 b.signature = sig
                 return@forEach
             }
-            if (com.maxim.marquee.data.Emby.connected) {
+            // Your server's "New in …" rows: off by default (its titles still show up in Continue
+            // Watching, search and as a source); Settings can add them to the tabs or everywhere.
+            val embyRows = mutableListOf<RowModel>()
+            val embyMode = Store.embyRows
+            if (com.maxim.marquee.data.Emby.connected && (embyMode == 2 || (embyMode == 1 && b.type != null))) {
                 embyLibraries.filter { lib ->
                     when (b.type) {
                         "series" -> lib.type == "tvshows"
                         "movie" -> lib.type == "movies"
-                        else -> true
+                        else -> lib.type == "tvshows" || lib.type == "movies"
                     }
                 }.forEach { lib ->
-                    defs += RowModel("emby-latest-${lib.id}", "New in ${lib.name}", RowSource.Emby("latest", lib.id))
+                    embyRows += RowModel("emby-latest-${lib.id}", "New in ${lib.name}", RowSource.Emby("latest", lib.id))
                 }
             }
             // Rows with the same name from different addons (e.g. two "Popular Movies") become one row.
@@ -532,6 +536,8 @@ class AppModel(private val activity: MainActivity) {
                 else -> catalogRows.add(minOf(1, catalogRows.size), top10Row(b.type))
             }
             if (Repo.addons.isNotEmpty()) defs += catalogRows
+            // After your usual rows, not in front of them.
+            defs += embyRows
             b.reset(defs.filter { it.title.lowercase() !in hidden || it.source is RowSource.Continue })
             b.signature = sig
             if (b.withContinue) {
@@ -796,7 +802,10 @@ class AppModel(private val activity: MainActivity) {
                 )
             }
         }
+        val hidden = Store.continueHidden
         return byId.values
+            // Taken off by hand: stays off until you watch it again.
+            .filter { c -> (hidden[c.metaId] ?: -1) < c.time }
             .sortedByDescending { it.time }
             .take(50)
             .map { c ->
@@ -897,7 +906,14 @@ class AppModel(private val activity: MainActivity) {
         }
     }
 
+    /** Marked as watched by hand, and not played again since. */
+    private fun markedDone(metaId: String, videoId: String): Boolean {
+        val mark = Store.markedWatched[metaId] ?: return false
+        return (Store.progress(videoId)?.updated ?: -1) < mark
+    }
+
     fun progressFor(metaId: String, videoId: String): Float? {
+        if (markedDone(metaId, videoId)) return null
         val (pos, dur) = positionOf(metaId, videoId) ?: return null
         if (dur <= 0 || pos < 5_000) return null
         val f = pos.toFloat() / dur
@@ -905,6 +921,7 @@ class AppModel(private val activity: MainActivity) {
     }
 
     fun watched(metaId: String, videoId: String): Boolean {
+        if (markedDone(metaId, videoId)) return true
         val (pos, dur) = positionOf(metaId, videoId) ?: return false
         return dur > 0 && pos >= dur * 0.95
     }
@@ -1239,10 +1256,35 @@ class AppModel(private val activity: MainActivity) {
     }
 
     fun dismissContinue(item: CardItem) {
-        Store.dismiss(item.meta.id)
-        library = library.map { if (it.id == item.meta.id) it.copy(timeOffset = 0) else it }
+        val id = item.meta.id
+        Store.dismiss(id)
+        Store.hideFromContinue(id)
+        library = library.map { if (it.id == id) it.copy(timeOffset = 0) else it }
         refreshContinue()
-        scope.launch { Repo.rewind(item.meta.id) }
+        toast("Removed from Continue Watching")
+        scope.launch { Repo.rewind(id) }
+    }
+
+    /**
+     * "Mark as watched" for a whole show (or a movie): every episode counts as watched, it leaves
+     * Continue Watching, and Stremio and your Emby server are told too. Watching it again later
+     * brings it back as usual.
+     */
+    fun markWatched(meta: MetaItem) {
+        val id = meta.id
+        Store.dismiss(id)
+        Store.markWatched(id)
+        Store.hideFromContinue(id)
+        library = library.map { if (it.id == id) it.copy(timeOffset = 0) else it }
+        refreshContinue()
+        toast(if (meta.type == "series") "Marked the whole show as watched" else "Marked as watched")
+        scope.launch {
+            Repo.markWatched(id)
+            if (com.maxim.marquee.data.Emby.markPlayed(id)) {
+                embyEntries = embyEntries.filter { it.card.meta.id != id }
+                refreshContinue()
+            }
+        }
     }
 
     fun openCardMenu(b: BrowseState?, item: CardItem, fromContinue: Boolean, rowTitle: String? = null) {
@@ -1267,6 +1309,11 @@ class AppModel(private val activity: MainActivity) {
 
     fun showHiddenRows() {
         Store.hiddenRows = emptySet()
+        rebuildRows(force = true)
+    }
+
+    fun setEmbyRows(mode: Int) {
+        Store.embyRows = mode
         rebuildRows(force = true)
     }
 

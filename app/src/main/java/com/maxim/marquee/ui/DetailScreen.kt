@@ -1,5 +1,7 @@
 package com.maxim.marquee.ui
 
+import androidx.compose.foundation.horizontalScroll
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -121,7 +123,8 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
             }
             Spacer(Modifier.height(22.dp))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            // Scrolls sideways if the buttons don't all fit (focus brings the last ones into view).
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 val epText = target?.let { " ${it.label}" } ?: ""
                 ActionButton(
                     text = (if (progress != null) "Resume" else "Play") + epText,
@@ -148,6 +151,9 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
                     icon = Icons.AutoMirrored.Filled.List,
                     onClick = { model.play(req, chooseSource = true) },
                 )
+                if (meta.isSeries) {
+                    ActionButton(text = "Mark watched", icon = PlayerIcons.Check, onClick = { model.markWatched(meta) })
+                }
             }
             progress?.let {
                 Spacer(Modifier.height(10.dp))

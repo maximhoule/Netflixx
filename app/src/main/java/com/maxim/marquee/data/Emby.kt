@@ -363,6 +363,17 @@ object Emby {
 
     private fun imdbForEmby(embyId: String?): String? = embyId?.let { synchronized(imdbToEmby) { embyToImdb[it] } }
 
+    /** The server's item id for an app id ("emby:123", or a merged "tt…" one), if it's on your server. */
+    fun serverIdFor(metaId: String): String? =
+        if (isEmby(metaId)) rawId(metaId) else synchronized(imdbToEmby) { imdbToEmby[metaId.substringBefore(':')] }
+
+    /** Marks a whole show (every episode) or a movie as watched on your server, so it leaves Resume and Next Up there too. */
+    suspend fun markPlayed(metaId: String): Boolean {
+        if (!connected) return false
+        val id = serverIdFor(metaId) ?: return false
+        return request("/Users/$userId/PlayedItems/$id", JSONObject()) != null
+    }
+
     /** Re-labels an Emby title with its IMDb id so it merges with the same title from Stremio. */
     private fun unify(m: MetaItem, embyId: String): MetaItem {
         val tt = imdbForEmby(embyId) ?: return m

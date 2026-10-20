@@ -397,6 +397,20 @@ object Repo {
         }
     }
 
+    /** Marks a title watched in your Stremio library and takes it off Continue Watching everywhere. */
+    suspend fun markWatched(metaId: String) {
+        val key = Store.authKey ?: return
+        safe {
+            val item = StremioApi.libraryItem(key, metaId) ?: return
+            val state = item.obj("state") ?: return
+            state.put("timeOffset", 0L)
+            state.put("flaggedWatched", 1)
+            state.put("timesWatched", (state.long("timesWatched") ?: 0) + 1)
+            item.put("_mtime", isoNow())
+            StremioApi.putLibraryItem(key, item)
+        }
+    }
+
     /** Add to / remove from My List (the Stremio library), exactly like Stremio does it. */
     suspend fun setInLibrary(meta: MetaItem, add: Boolean): Boolean {
         val key = Store.authKey ?: return false

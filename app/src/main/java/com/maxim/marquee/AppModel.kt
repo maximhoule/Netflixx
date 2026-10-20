@@ -260,8 +260,37 @@ class AppModel(private val activity: MainActivity) {
     }
 
     private var poller: Job? = null
+    private var pausedAt = 0L
+
+    fun onPause() {
+        pausedAt = System.currentTimeMillis()
+    }
+
+    /** Back after a long break (the TV kept the app in memory): reload everything. */
+    private fun refreshAll() {
+        scope.launch {
+            syncing = true
+            try {
+                Repo.refreshAddons()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // keep what we have
+            }
+            addonCount = Repo.addons.size
+            loadEmbyLibraries()
+            rebuildRows(force = true)
+            loadLibrary()
+            syncing = false
+        }
+    }
 
     fun onResume() {
+        if (loggedIn && pausedAt > 0 && System.currentTimeMillis() - pausedAt > 30 * 60_000 && stack.isEmpty()) {
+            pausedAt = 0
+            refreshAll()
+            return
+        }
         if (loggedIn && System.currentTimeMillis() - lastLibraryLoad > 15_000) scope.launch { loadLibrary() }
         // Keep Continue Watching in step with other devices while the app is open.
         if (poller == null) {
@@ -739,6 +768,7 @@ class AppModel(private val activity: MainActivity) {
     }
 
     fun onPlayerResult(data: Intent?) {
+        pausedAt = 0 // time spent watching isn't "away"; keep Home exactly where it was
         val p = pending ?: return
         pending = null
         var outcome = data?.getStringExtra("outcome") ?: "exit"

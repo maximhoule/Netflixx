@@ -113,6 +113,7 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         isForeground = false
         model.pauseTrailer()
+        model.onPause()
         super.onPause()
     }
 }

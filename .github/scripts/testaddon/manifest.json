@@ -1,0 +1,1 @@
+{"id": "test.sportstream", "version": "1.0.0", "name": "Test Sport Stream", "description": "Static test addon for the emulator test", "resources": ["catalog"], "types": ["tv"], "idPrefixes": ["testsport:"], "catalogs": [{"type": "tv", "id": "live-sports", "name": "Sport Stream"}]}

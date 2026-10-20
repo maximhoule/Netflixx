@@ -53,9 +53,9 @@ enum class Tab(val label: String, val icon: ImageVector) {
     PROFILE("Profiles", Icons.Filled.Person),
     SEARCH("Search", Icons.Filled.Search),
     HOME("Home", Icons.Filled.Home),
+    SPORTS("Sports", com.maxim.marquee.ui.SportsIcon),
     SERIES("Series", TvIcon),
     MOVIES("Movies", MovieIcon),
-    SPORTS("Sports", com.maxim.marquee.ui.SportsIcon),
     MYLIST("My List", Icons.Filled.Add),
     SETTINGS("Settings", Icons.Filled.Settings),
 }

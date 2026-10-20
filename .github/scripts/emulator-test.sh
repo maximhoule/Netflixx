@@ -4,15 +4,10 @@
 set -u
 PKG=com.maxim.marquee
 OUT=emu
-mkdir -p "$OUT/shots"
+mkdir -p "$OUT/shots" "$OUT/frames"
 n=0
 summary() { echo "$*" | tee -a "$OUT/summary.txt"; }
-
-alive() {
-  if ! adb shell pidof "$PKG" >/dev/null 2>&1; then
-    summary "APP NOT RUNNING after step: $1"
-  fi
-}
+alive() { adb shell pidof "$PKG" >/dev/null 2>&1 || summary "APP NOT RUNNING after step: $1"; }
 shot() {
   n=$((n + 1))
   adb exec-out screencap -p > "$(printf '%s/shots/%02d_%s.png' "$OUT" "$n" "$1")"
@@ -20,6 +15,13 @@ shot() {
 }
 key() { for k in "$@"; do adb shell input keyevent "$k"; sleep 0.4; done; }
 fast() { for i in $(seq 1 "$2"); do adb shell input keyevent "$1"; done; }
+# Side menu: 0 profile, 1 search, 2 home, 3 sports, 4 series, 5 movies, 6 my list, 7 settings
+tab() { fast DPAD_LEFT 8; sleep 0.6; fast DPAD_UP 10; [ "$1" -gt 0 ] && fast DPAD_DOWN "$1"; key DPAD_CENTER; }
+measure_start() { adb shell dumpsys gfxinfo $PKG reset >/dev/null; }
+measure_end() {
+  adb shell dumpsys gfxinfo $PKG framestats > "$OUT/frames/$1.txt"
+  python3 .github/scripts/framestats.py "$1" "$OUT/frames/$1.txt" | tee -a "$OUT/summary.txt"
+}
 
 adb root >/dev/null; sleep 3; adb wait-for-device
 adb shell settings put global stay_on_while_plugged_in 7
@@ -37,60 +39,61 @@ adb shell chmod 660 /data/data/$PKG/shared_prefs/marquee.xml /data/data/$PKG/sha
 adb shell restorecon -R /data/data/$PKG/shared_prefs
 
 adb logcat -c
-summary "== cold start"
-adb shell am start -W -n $PKG/.MainActivity | grep -E "TotalTime|WaitTime" | tee -a "$OUT/summary.txt"
+summary "== cold start (first ever: nothing saved yet)"
+adb shell am start -W -n $PKG/.MainActivity | grep -E "TotalTime" | tee -a "$OUT/summary.txt"
 sleep 3; shot start_3s
 sleep 15; shot home
-adb shell dumpsys gfxinfo $PKG reset >/dev/null
 
 summary "== browse rows"
-key DPAD_DOWN; sleep 2; shot row1
-key DPAD_RIGHT DPAD_RIGHT; sleep 3; shot row1_rest_expanded
-for i in 1 2 3 4 5; do key DPAD_DOWN; sleep 2.5; shot "scroll_down_$i"; done
-fast DPAD_RIGHT 25; sleep 2; shot fast_right
-fast DPAD_DOWN 8; sleep 2; shot fast_down
-fast DPAD_UP 12; sleep 3; shot back_to_top
-adb shell dumpsys gfxinfo $PKG > "$OUT/gfxinfo_browse.txt"
+measure_start
+key DPAD_DOWN; sleep 2; shot row2
+key DPAD_RIGHT DPAD_RIGHT; sleep 3; shot row2_rest_expanded
+for i in 1 2 3 4 5; do key DPAD_DOWN; sleep 2; done; shot scrolled_down
+measure_end browse_slow
+measure_start
+fast DPAD_RIGHT 25; sleep 1; fast DPAD_DOWN 8; sleep 1; fast DPAD_UP 12; sleep 3
+measure_end browse_fast_held_keys
+shot back_to_top
 
 summary "== details"
-key DPAD_DOWN DPAD_RIGHT; sleep 2
+measure_start
+key DPAD_DOWN DPAD_DOWN DPAD_RIGHT; sleep 2
 key DPAD_CENTER; sleep 7; shot detail
-key DPAD_DOWN; sleep 2; shot detail_down
-key DPAD_DOWN DPAD_DOWN; sleep 3; shot detail_more
+key DPAD_DOWN; sleep 2; key DPAD_DOWN DPAD_DOWN; sleep 3; shot detail_more
 key BACK; sleep 3; shot back_from_detail
+measure_end details
+
+summary "== sports tab"
+measure_start
+tab 3; sleep 6; shot sports_tab
+key DPAD_RIGHT DPAD_RIGHT DPAD_RIGHT; sleep 2; shot sports_browse
+measure_end sports
+tab 2; sleep 3; shot home_sports_row
 
 summary "== play without a stream addon (should show the No sources screen)"
-key DPAD_CENTER; sleep 6
+key DPAD_DOWN DPAD_DOWN DPAD_CENTER; sleep 6
 key DPAD_CENTER; sleep 25; shot play_no_sources
-key BACK; sleep 2; key BACK; sleep 2; shot after_problem
-
-summary "== long press menu"
-adb shell input keyevent --longpress DPAD_CENTER; sleep 2; shot long_press_menu
-key BACK; sleep 1
+key BACK; sleep 2; key BACK; sleep 2
 
 summary "== search"
-fast DPAD_LEFT 8; sleep 1; shot rail_open
-key DPAD_UP DPAD_CENTER; sleep 3; shot search
+measure_start
+tab 1; sleep 3; shot search
 key DPAD_RIGHT DPAD_CENTER DPAD_LEFT DPAD_CENTER DPAD_DOWN DPAD_DOWN DPAD_DOWN DPAD_RIGHT DPAD_CENTER
 sleep 15; shot search_results_bat
+measure_end search
 
-summary "== settings"
-fast DPAD_LEFT 4; sleep 1
-fast DPAD_DOWN 5; key DPAD_CENTER; sleep 3; shot settings
-fast DPAD_DOWN 10; sleep 2; shot settings_lower
-fast DPAD_DOWN 12; sleep 2; shot settings_bottom
-
-summary "== series and movies tabs"
-fast DPAD_LEFT 3; sleep 1; fast DPAD_UP 3; key DPAD_CENTER; sleep 8; shot series_tab
-fast DPAD_LEFT 3; sleep 1; key DPAD_DOWN DPAD_CENTER; sleep 8; shot movies_tab
-fast DPAD_LEFT 3; sleep 1; key DPAD_DOWN DPAD_CENTER; sleep 3; shot my_list
+summary "== settings, series, movies, my list"
+tab 7; sleep 3; shot settings
+fast DPAD_DOWN 25; sleep 2; shot settings_bottom
+measure_start
+tab 4; sleep 8; shot series_tab
+tab 5; sleep 8; shot movies_tab
+measure_end tabs
+tab 6; sleep 3; shot my_list
 
 summary "== profiles"
-fast DPAD_LEFT 3; sleep 1; fast DPAD_UP 6; key DPAD_CENTER; sleep 3; shot profiles
-key DPAD_RIGHT DPAD_CENTER; sleep 3; shot profile_add
-key BACK; sleep 2; shot profiles_after_cancel
-key DPAD_DOWN DPAD_CENTER; sleep 2; shot manage_profiles
-key BACK; sleep 1; key BACK; sleep 2; shot profiles_closed
+tab 0; sleep 3; shot profiles
+key BACK; sleep 2
 
 summary "== player (public test stream + addon subtitle file)"
 SUBURL="https://raw.githubusercontent.com/maximhoule/Netflixx/main/.github/scripts/test-subtitles.srt"
@@ -99,29 +102,34 @@ adb shell am start -n $PKG/.PlayerActivity \
   --es metaId tt1254207 --es videoId tt1254207 --es name "Big\ Buck\ Bunny" --es streamName "Test\ stream" \
   --es subs "'[{\"url\":\"$SUBURL\",\"lang\":\"eng\",\"label\":\"ENG\"}]'" >/dev/null
 sleep 20; shot player_playing
-key DPAD_RIGHT; sleep 1; shot player_seek_flash
-key DPAD_UP; sleep 2; shot player_controls_badges
-# Audio & subtitles panel: Play, -10, +10, CC
-key DPAD_UP; key DPAD_RIGHT DPAD_RIGHT DPAD_RIGHT DPAD_CENTER; sleep 2; shot player_panel
-key DPAD_DOWN DPAD_CENTER; sleep 1; shot night_mode_on
+measure_start
+key DPAD_UP; sleep 2; shot player_controls
+key DPAD_UP; key DPAD_RIGHT DPAD_RIGHT DPAD_RIGHT DPAD_CENTER; sleep 2
 key DPAD_RIGHT DPAD_UP DPAD_UP DPAD_DOWN DPAD_CENTER; sleep 4; shot addon_sub_selected
-key DPAD_DOWN DPAD_DOWN DPAD_CENTER; sleep 1; shot sub_timing_later
 key BACK; sleep 1; key BACK; sleep 3; shot subtitle_on_video
+measure_end player_ui
+adb shell dumpsys meminfo $PKG | grep -E "TOTAL PSS|TOTAL:|Java Heap|Native Heap|Graphics" | head -6 | sed 's/^/player memory: /' | tee -a "$OUT/summary.txt"
 key BACK; sleep 1; key BACK; sleep 3; shot after_player
+
+summary "== warm start (saved data)"
+adb shell am force-stop $PKG; sleep 2
+adb shell am start -W -n $PKG/.MainActivity | grep -E "TotalTime" | tee -a "$OUT/summary.txt"
+sleep 2; shot warm_start_2s
+sleep 6
+adb shell dumpsys meminfo $PKG | grep -E "TOTAL PSS|TOTAL:" | head -2 | sed 's/^/home memory: /' | tee -a "$OUT/summary.txt"
 
 summary "== results"
 adb logcat -d > "$OUT/logcat.txt"
-adb shell dumpsys gfxinfo $PKG > "$OUT/gfxinfo_end.txt"
 if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt"; then
   summary "CRASHES:"; grep -A25 "FATAL EXCEPTION" "$OUT/logcat.txt" | head -150 | tee -a "$OUT/summary.txt"
 else
   summary "No crashes."
 fi
 grep -E "ANR in $PKG" "$OUT/logcat.txt" | tee -a "$OUT/summary.txt" || true
-grep -E "^.{0,40}[EW] .*($PKG|AndroidRuntime|ExoPlayer|MediaCodec)" "$OUT/logcat.txt" | grep -v "chatty" | head -120 > "$OUT/errors_warnings.txt" || true
+grep -E "Choreographer.*Skipped [0-9]+ frames" "$OUT/logcat.txt" | tee "$OUT/skipped.txt" | head -20 | sed 's/^/skipped: /' | tee -a "$OUT/summary.txt"
 grep -E " Marquee *:" "$OUT/logcat.txt" > "$OUT/marquee_log.txt" || true
+summary "App log lines: $(wc -l < "$OUT/marquee_log.txt")"; grep -E "GET failed" "$OUT/marquee_log.txt" | head -20 | tee -a "$OUT/summary.txt"
 grep -E "ExoPlayerImplInternal|MediaCodecRenderer|AudioTrack|DefaultAudioSink" "$OUT/logcat.txt" | grep -E " E | W " | head -40 > "$OUT/player_errors.txt" || true
-summary "Player warnings/errors: $(wc -l < "$OUT/player_errors.txt")"; head -15 "$OUT/player_errors.txt" | tee -a "$OUT/summary.txt"
-summary "App log lines: $(wc -l < "$OUT/marquee_log.txt")"; grep -E "search '|GET failed" "$OUT/marquee_log.txt" | head -40 | tee -a "$OUT/summary.txt"
-grep -E "Janky frames|Total frames|50th|90th|99th" "$OUT/gfxinfo_browse.txt" | head -8 | tee -a "$OUT/summary.txt"
+summary "Player warnings/errors: $(wc -l < "$OUT/player_errors.txt")"; head -10 "$OUT/player_errors.txt" | tee -a "$OUT/summary.txt"
+grep -E "Long monitor contention|StrictMode|OutOfMemory|GC freed.*paused [0-9]{3,}" "$OUT/logcat.txt" | grep "$(adb shell pidof $PKG 2>/dev/null | tr -d '\r') " | head -10 | sed 's/^/contention: /' | tee -a "$OUT/summary.txt" || true
 exit 0

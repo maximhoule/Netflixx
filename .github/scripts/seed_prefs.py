@@ -3,7 +3,8 @@ import json, sys, urllib.request
 from xml.sax.saxutils import escape
 
 addons = []
-for url in ["https://v3-cinemeta.strem.io/manifest.json", "https://opensubtitles-v3.strem.io/manifest.json"]:
+for url in ["https://v3-cinemeta.strem.io/manifest.json", "https://opensubtitles-v3.strem.io/manifest.json",
+            "https://raw.githubusercontent.com/maximhoule/Netflixx/main/.github/scripts/testaddon/manifest.json"]:
     try:
         with urllib.request.urlopen(url, timeout=20) as r:
             addons.append({"transportUrl": url, "manifest": json.load(r), "flags": {}})

@@ -53,6 +53,34 @@ class MainActivity : ComponentActivity() {
         model.start()
     }
 
+    /** True while OK is physically held down. */
+    var okHeld = false
+    /** Set when a long-press opened a menu: the release of that same press must not click anything. */
+    var swallowOkUp = false
+
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        val ok = event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
+            event.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+            event.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER
+        if (ok) {
+            if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+                if (event.repeatCount == 0) {
+                    okHeld = true
+                    swallowOkUp = false
+                } else if (swallowOkUp) {
+                    return true
+                }
+            } else if (event.action == android.view.KeyEvent.ACTION_UP) {
+                okHeld = false
+                if (swallowOkUp) {
+                    swallowOkUp = false
+                    return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onResume() {
         super.onResume()
         model.onResume()

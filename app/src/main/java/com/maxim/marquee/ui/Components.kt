@@ -103,11 +103,19 @@ fun Tile(
                 if (onLongClick == null) return@onPreviewKeyEvent false
                 val ok = e.key == Key.DirectionCenter || e.key == Key.Enter || e.key == Key.NumPadEnter
                 if (!ok) return@onPreviewKeyEvent false
-                val repeat = e.nativeKeyEvent.repeatCount
-                when {
-                    e.type == KeyEventType.KeyDown && repeat == 1 -> { longFired = true; onLongClick(); true }
-                    e.type == KeyEventType.KeyDown && repeat > 1 -> true
-                    e.type == KeyEventType.KeyUp && longFired -> { longFired = false; true }
+                val ne = e.nativeKeyEvent
+                when (e.type) {
+                    KeyEventType.KeyDown -> when {
+                        ne.repeatCount == 0 -> { longFired = false; false }
+                        !longFired -> { longFired = true; onLongClick(); true }
+                        else -> true
+                    }
+                    KeyEventType.KeyUp -> when {
+                        longFired -> { longFired = false; true }
+                        // Remotes that don't auto-repeat: decide by how long OK was held.
+                        ne.eventTime - ne.downTime >= 450 -> { onLongClick(); true }
+                        else -> false
+                    }
                     else -> false
                 }
             }

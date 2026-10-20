@@ -24,9 +24,22 @@ jobs:
           gradle-version: "8.9"
 
       - name: Build signed APK
-        run: gradle :app:assembleRelease --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          gradle :app:assembleRelease --no-daemon 2>&1 | tee build.log
         env:
           VERSION_CODE: ${{ github.run_number }}
+
+      - name: Report build errors
+        if: failure()
+        run: |
+          { grep -E "^e: " build.log; grep -E -A6 "What went wrong" build.log; } | head -200 > errors.txt || true
+          [ -s errors.txt ] || tail -60 build.log > errors.txt
+          split -l 20 errors.txt part_
+          for f in part_*; do
+            msg=$(sed -e 's/%/%25/g' "$f" | sed -e ':a;N;$!ba;s/\n/%0A/g')
+            echo "::error title=Build errors ($f)::$msg"
+          done
 
       - name: Collect APK
         run: cp app/build/outputs/apk/release/app-release.apk Marquee.apk

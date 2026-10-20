@@ -234,6 +234,8 @@ data class StreamItem(
     val url: String,
     val headers: Map<String, String>,
     val subtitles: List<SubTrack>,
+    /** Set when this source is your Emby server; progress is reported there too. */
+    val embyId: String? = null,
 ) {
     val quality: Quality by lazy { Quality.parse("$name $title") }
 

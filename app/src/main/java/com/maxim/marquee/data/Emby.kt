@@ -167,6 +167,53 @@ object Emby {
         )
     }
 
+    // ---------------------------------------------------------------- one identity per title
+
+    /** IMDb id ⇄ Emby id for every movie and series on the server. */
+    private val imdbToEmby = HashMap<String, String>()
+    private val embyToImdb = HashMap<String, String>()
+    private var indexedAt = 0L
+
+    private fun imdbOf(o: JSONObject): String? {
+        val p = o.obj("ProviderIds") ?: return null
+        return (p.str("Imdb") ?: p.str("IMDB") ?: p.str("imdb"))?.takeIf { it.startsWith("tt") }
+    }
+
+    /** Lightweight scan of the library (ids only). Refreshed at most every 30 minutes. */
+    suspend fun buildIndex(force: Boolean = false) {
+        if (!connected) return
+        if (!force && System.currentTimeMillis() - indexedAt < 30 * 60_000 && imdbToEmby.isNotEmpty()) return
+        val items = getObj(
+            "/Users/$userId/Items?Recursive=true&IncludeItemTypes=Movie,Series&Fields=ProviderIds" +
+                "&EnableImages=false&EnableUserData=false&Limit=20000",
+        )?.arr("Items").objects()
+        if (items.isEmpty()) return
+        withContext(Dispatchers.Default) {
+            val a = HashMap<String, String>(); val b = HashMap<String, String>()
+            items.forEach { o ->
+                val id = o.str("Id") ?: return@forEach
+                val tt = imdbOf(o) ?: return@forEach
+                a[tt] = id; b[id] = tt
+            }
+            synchronized(imdbToEmby) {
+                imdbToEmby.clear(); imdbToEmby.putAll(a)
+                embyToImdb.clear(); embyToImdb.putAll(b)
+            }
+        }
+        indexedAt = System.currentTimeMillis()
+    }
+
+    /** True when this Stremio title (tt…) is also on your Emby server. */
+    fun hasTitle(imdbId: String): Boolean = synchronized(imdbToEmby) { imdbToEmby.containsKey(imdbId.substringBefore(':')) }
+
+    private fun imdbForEmby(embyId: String?): String? = embyId?.let { synchronized(imdbToEmby) { embyToImdb[it] } }
+
+    /** Re-labels an Emby title with its IMDb id so it merges with the same title from Stremio. */
+    private fun unify(m: MetaItem, embyId: String): MetaItem {
+        val tt = imdbForEmby(embyId) ?: return m
+        return m.copy(id = tt, defaultVideoId = if (m.type == "movie") tt else null)
+    }
+
     // ---------------------------------------------------------------- user data cache
 
     /** Emby's own resume points, so Resume works for things watched in other Emby apps. */
@@ -178,7 +225,20 @@ object Emby {
     private fun remember(o: JSONObject) {
         val id = o.str("Id") ?: return
         val ud = o.obj("UserData") ?: return
-        userData[PREFIX + id] = UserPos(ms(ud.long("PlaybackPositionTicks")), ms(o.long("RunTimeTicks")), ud.optBoolean("Played"))
+        val pos = UserPos(ms(ud.long("PlaybackPositionTicks")), ms(o.long("RunTimeTicks")), ud.optBoolean("Played"))
+        userData[PREFIX + id] = pos
+        unifiedVideoId(o)?.let { userData[it] = pos }
+    }
+
+    /** "tt123:1:2" for an Emby episode, or "tt456" for a movie, when the IMDb id is known. */
+    private fun unifiedVideoId(o: JSONObject): String? = when (o.str("Type")) {
+        "Episode" -> {
+            val tt = imdbForEmby(o.str("SeriesId"))
+            val sn = o.int("ParentIndexNumber"); val en = o.int("IndexNumber")
+            if (tt != null && sn != null && en != null) "$tt:$sn:$en" else null
+        }
+        "Movie" -> imdbForEmby(o.str("Id"))
+        else -> null
     }
 
     private const val FIELDS = "Overview,Genres,PrimaryImageAspectRatio,ProviderIds,People,RemoteTrailers,CommunityRating,ProductionYear,RunTimeTicks,MediaSources"
@@ -193,19 +253,31 @@ object Emby {
             Library(id, o.str("Name") ?: "Library", type)
         }
 
-    /** Episodes/movies in progress, as tiles that resume directly. */
-    suspend fun resume(): List<CardItem> =
-        getObj("/Users/$userId/Items/Resume?Limit=40&Recursive=true&MediaTypes=Video&Fields=$FIELDS&EnableImageTypes=Primary,Backdrop,Logo,Thumb")
-            ?.arr("Items").objects().mapNotNull { o -> episodeCard(o, resumeBadge = false) }
+    /** A Continue Watching entry from Emby, with when it was last watched (for merging). */
+    data class Entry(val card: CardItem, val time: Long, val position: Long, val duration: Long)
 
-    suspend fun nextUp(): List<CardItem> =
+    /** Episodes/movies in progress, as tiles that resume directly. */
+    suspend fun resume(): List<Entry> =
+        getObj("/Users/$userId/Items/Resume?Limit=40&Recursive=true&MediaTypes=Video&Fields=$FIELDS&EnableImageTypes=Primary,Backdrop,Logo,Thumb")
+            ?.arr("Items").objects().mapNotNull { o ->
+                val c = episodeCard(o, resumeBadge = false) ?: return@mapNotNull null
+                Entry(c, parseIso(o.obj("UserData")?.str("LastPlayedDate")), ms(o.obj("UserData")?.long("PlaybackPositionTicks")), ms(o.long("RunTimeTicks")))
+            }
+
+    /** Next unwatched episode of shows you're watching. Ranked after anything in progress. */
+    suspend fun nextUp(): List<Entry> =
         getObj("/Shows/NextUp?UserId=$userId&Limit=40&Fields=$FIELDS&EnableImageTypes=Primary,Backdrop,Logo,Thumb")
-            ?.arr("Items").objects().mapNotNull { o -> episodeCard(o, resumeBadge = true) }
+            ?.arr("Items").objects().mapIndexedNotNull { i, o ->
+                val c = episodeCard(o, resumeBadge = true) ?: return@mapIndexedNotNull null
+                Entry(c, parseIso(o.obj("UserData")?.str("LastPlayedDate")).takeIf { it > 0 } ?: (1_000_000L - i), 1, 0)
+            }
 
     private fun episodeCard(o: JSONObject, resumeBadge: Boolean): CardItem? {
         remember(o)
-        val meta = toMeta(o) ?: return null
-        val vid = PREFIX + (o.str("Id") ?: return null)
+        val raw = toMeta(o) ?: return null
+        val embyMetaId = if (o.str("Type") == "Episode") o.str("SeriesId") ?: o.str("Id") else o.str("Id")
+        val meta = unify(raw, embyMetaId ?: "")
+        val vid = unifiedVideoId(o) ?: (PREFIX + (o.str("Id") ?: return null))
         val pos = ms(o.obj("UserData")?.long("PlaybackPositionTicks"))
         val dur = ms(o.long("RunTimeTicks"))
         val label = if (o.str("Type") == "Episode") {
@@ -222,11 +294,14 @@ object Emby {
 
     suspend fun latest(libraryId: String): List<CardItem> =
         getArr("/Users/$userId/Items/Latest?ParentId=$libraryId&Limit=40&Fields=$FIELDS&EnableImageTypes=Primary,Backdrop,Logo")
-            ?.objects()?.mapNotNull { o -> toMeta(o)?.let { CardItem(it) } } ?: emptyList()
+            ?.objects()?.mapNotNull { o ->
+                val id = if (o.str("Type") == "Episode") o.str("SeriesId") else o.str("Id")
+                toMeta(o)?.let { CardItem(unify(it, id ?: "")) }
+            }?.distinctBy { it.meta.id } ?: emptyList()
 
     suspend fun search(query: String): List<MetaItem> =
         getObj("/Users/$userId/Items?SearchTerm=${enc(query)}&IncludeItemTypes=Movie,Series&Recursive=true&Limit=40&Fields=$FIELDS")
-            ?.arr("Items").objects().mapNotNull { toMeta(it) }
+            ?.arr("Items").objects().mapNotNull { o -> toMeta(o)?.let { unify(it, o.str("Id") ?: "") } }
 
     // ---------------------------------------------------------------- detail
 
@@ -255,6 +330,12 @@ object Emby {
             )
         }
         return base.copy(videos = videos)
+    }
+
+    /** Emby's own metadata for a Stremio title, used if no addon can describe it. */
+    suspend fun metaForImdb(imdbId: String): MetaItem? {
+        val eid = synchronized(imdbToEmby) { imdbToEmby[imdbId] } ?: return null
+        return meta(PREFIX + eid)
     }
 
     // ---------------------------------------------------------------- playback
@@ -287,13 +368,39 @@ object Emby {
                 )
             }
             StreamItem(
-                name = "Emby\n" + (src.str("Name") ?: "Direct play"),
+                name = "Emby · Your server\n" + (src.str("Name") ?: "Direct play"),
                 title = parts.joinToString(" · "),
                 url = "$server/Videos/$raw/stream?static=true&MediaSourceId=$sid&api_key=$token",
                 headers = emptyMap(),
                 subtitles = subs,
+                embyId = PREFIX + raw,
             )
         }
+    }
+
+    /** Emby episode ids per series, keyed "season:episode". */
+    private val episodeIndex = HashMap<String, Map<String, String>>()
+
+    suspend fun streamsForTitle(type: String, videoId: String): List<StreamItem> {
+        if (!connected) return emptyList()
+        if (isEmby(videoId)) return streams(videoId)
+        val p = videoId.split(":")
+        val embyTitle = synchronized(imdbToEmby) { imdbToEmby[p[0]] } ?: return emptyList()
+        if (type == "movie" || p.size < 3) return streams(PREFIX + embyTitle)
+        val key = "${p[p.size - 2]}:${p[p.size - 1]}"
+        val eps = episodeIndex[embyTitle] ?: run {
+            val list = getObj("/Shows/$embyTitle/Episodes?UserId=$userId&Fields=RunTimeTicks")?.arr("Items").objects()
+            val m = HashMap<String, String>()
+            list.forEach { e ->
+                remember(e)
+                val sn = e.int("ParentIndexNumber"); val en = e.int("IndexNumber"); val id = e.str("Id")
+                if (sn != null && en != null && id != null) m["$sn:$en"] = id
+            }
+            episodeIndex[embyTitle] = m
+            m
+        }
+        val epId = eps[key] ?: return emptyList()
+        return streams(PREFIX + epId)
     }
 
     private val started = HashSet<String>()

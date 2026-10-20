@@ -86,7 +86,17 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
             TitleArt(meta, big = true)
             Spacer(Modifier.height(12.dp))
             val line = infoLine(meta)
-            if (line.isNotEmpty()) Text(line, color = C.Dim, fontSize = 15.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val onEmby = com.maxim.marquee.data.Emby.isEmby(meta.id) || com.maxim.marquee.data.Emby.hasTitle(meta.id)
+                if (onEmby) {
+                    Text(
+                        "ON YOUR EMBY SERVER", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.background(Color(0xFF52B54B), RoundedCornerShape(3.dp)).padding(horizontal = 7.dp, vertical = 3.dp),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                }
+                if (line.isNotEmpty()) Text(line, color = C.Dim, fontSize = 15.sp)
+            }
             meta.description?.let {
                 Spacer(Modifier.height(10.dp))
                 Text(

@@ -2,6 +2,7 @@ package com.maxim.marquee.data
 
 import com.maxim.marquee.AppScope
 import android.util.LruCache
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -116,6 +117,8 @@ object Repo {
             metaCache.put("$type/$id", m)
             return m
         }
+        // Not described by any addon but on your Emby server: use Emby's details.
+        if (Emby.connected) Emby.metaForImdb(id)?.let { metaCache.put("$type/$id", it); return it }
         return null
     }
 
@@ -141,6 +144,16 @@ object Repo {
      */
     suspend fun bestStreams(type: String, videoId: String): List<StreamItem> {
         if (Emby.isEmby(videoId)) return Emby.streams(videoId)
+        // Your own server's copy (if any) is looked up in parallel and always listed first.
+        val emby: Deferred<List<StreamItem>>? = if (Emby.connected) {
+            AppScope.async { safe { Emby.streamsForTitle(type, videoId) } ?: emptyList<StreamItem>() }
+        } else null
+        val fromAddons = addonStreams(type, videoId)
+        val local: List<StreamItem> = if (emby != null) withTimeoutOrNull(6_000) { emby.await() } ?: emptyList() else emptyList()
+        return local + fromAddons
+    }
+
+    private suspend fun addonStreams(type: String, videoId: String): List<StreamItem> {
         val list = streamAddons(type, videoId)
         if (list.isEmpty()) return emptyList()
         // Detached, so a slow addon never holds up playback; it just finishes in the background.
@@ -169,8 +182,9 @@ object Repo {
             send(Triple(0, embyAddon, Emby.streams(videoId)))
             return@channelFlow
         }
+        if (Emby.connected) launch { send(Triple(0, embyAddon, safe { Emby.streamsForTitle(type, videoId) } ?: emptyList())) }
         streamAddons(type, videoId).forEachIndexed { i, a ->
-            launch { send(Triple(i, a, fetchStreams(a, type, videoId))) }
+            launch { send(Triple(i + 1, a, fetchStreams(a, type, videoId))) }
         }
     }
 
@@ -189,17 +203,25 @@ object Repo {
 
     suspend fun search(query: String): List<Pair<String, List<MetaItem>>> = coroutineScope {
         val q = enc(query).replace(":", "%3A")
-        val emby = if (Emby.connected) async { "Your Emby library" to Emby.search(query) } else null
+        val emby: Deferred<List<MetaItem>>? = if (Emby.connected) {
+            async { safe { Emby.search(query) } ?: emptyList<MetaItem>() }
+        } else null
         val stremio = addons.flatMap { a -> a.catalogs.filter { it.supportsSearch }.map { a to it } }
             .map { (a, c) ->
                 async {
-                    val items = Http.getMapped("${a.base}/catalog/${c.type}/${enc(c.id)}/search=$q.json") { o ->
+                    Http.getMapped("${a.base}/catalog/${c.type}/${enc(c.id)}/search=$q.json") { o ->
                         o.arr("metas").objects().mapNotNull { MetaItem.parse(it, c.type) }
                     } ?: emptyList()
-                    "${typeLabel(c.type)} · ${a.name}" to items
                 }
-            }
-        (listOfNotNull(emby) + stremio).awaitAll().filter { it.second.isNotEmpty() }
+            }.awaitAll().flatten()
+        val all = stremio + (emby?.await() ?: emptyList())
+        // One row per type ("Movies", "Series", …), each title once.
+        val order = listOf("movie", "series")
+        all.groupBy { it.type }
+            .toList()
+            .sortedBy { (t, _) -> order.indexOf(t).let { if (it < 0) 99 else it } }
+            .map { (t, items) -> typeLabel(t) to items.distinctBy { it.id } }
+            .filter { it.second.isNotEmpty() }
     }
 
     suspend fun library(): List<LibEntry> {

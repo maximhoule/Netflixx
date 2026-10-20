@@ -8,7 +8,7 @@ val buildNumber = (System.getenv("VERSION_CODE") ?: "1").toInt()
 
 android {
     namespace = "com.maxim.marquee"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.maxim.marquee"
@@ -75,10 +75,11 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
 
-    val media3 = "1.4.1"
+    val media3 = "1.5.0"
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-exoplayer-hls:$media3")
     implementation("androidx.media3:media3-ui:$media3")
     // Software decoders for DTS / TrueHD / E-AC3 audio that most TV boxes can't decode natively.
-    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.4.1+1")
+    // Must match the media3 version above (Jellyfin publishes one build per media3 release).
+    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.5.0+1")
 }

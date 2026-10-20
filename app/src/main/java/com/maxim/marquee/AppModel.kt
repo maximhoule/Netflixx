@@ -134,6 +134,10 @@ class AppModel(private val activity: MainActivity) {
     private var embyEntries: List<com.maxim.marquee.data.Emby.Entry> = emptyList()
     var railFocused = false
     var cardMenu by mutableStateOf<CardMenu?>(null)
+    var updateStatus by mutableStateOf<String?>(null)
+    var updateProgress by mutableStateOf(-1f)
+    private var updating = false
+    private var lastUpdateCheck = 0L
     /** Whether the TV can show Dolby Vision; DV-only sources are avoided when it can't. */
     var supportsDV = false
     /** Tallest resolution the TV can display (1080 on a 1080p set, 2160 on 4K). */
@@ -836,6 +840,52 @@ class AppModel(private val activity: MainActivity) {
         val m = cardMenu ?: return
         cardMenu = null
         m.browse?.let { b -> b.pendingFocusKey = b.lastFocusKey }
+    }
+
+    /** Runs whenever the app is opened: finds, downloads and installs a newer build. */
+    fun checkForUpdate(manual: Boolean = false) {
+        if (updating) return
+        val now = System.currentTimeMillis()
+        if (!manual && now - lastUpdateCheck < 30 * 60_000) return
+        lastUpdateCheck = now
+        scope.launch {
+            val r = Updater.check(activity)
+            if (r == null) {
+                if (manual) toast("You're up to date (build ${Updater.currentBuild(activity)})")
+                return@launch
+            }
+            if (!Store.autoUpdate && !manual) {
+                updateStatus = "Update available (build ${r.build}) · Settings → Check for updates"
+                delay(8_000); updateStatus = null
+                return@launch
+            }
+            if (!Updater.canInstall(activity)) {
+                updateStatus = "Allow Marquee to install apps so it can update itself"
+                lastUpdateCheck = 0 // check again as soon as you come back
+                Updater.openInstallPermission(activity)
+                delay(6_000); updateStatus = null
+                return@launch
+            }
+            updating = true
+            updateProgress = 0f
+            updateStatus = "Downloading update · build ${r.build}"
+            try {
+                val apk = Updater.download(activity, r) { updateProgress = it }
+                updateProgress = 1f
+                updateStatus = "Installing update…"
+                Updater.install(activity, apk)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                toast("Update failed: ${e.message}")
+                lastUpdateCheck = 0
+            } finally {
+                updating = false
+                delay(5_000)
+                updateStatus = null
+                updateProgress = -1f
+            }
+        }
     }
 
     fun voiceSearch() {

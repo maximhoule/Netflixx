@@ -28,6 +28,7 @@ import com.maxim.marquee.ui.LoadingOverlay
 import com.maxim.marquee.ui.LoginScreen
 import com.maxim.marquee.ui.MainShell
 import com.maxim.marquee.ui.StreamsScreen
+import com.maxim.marquee.ui.UpdateBanner
 
 class MainActivity : ComponentActivity() {
     lateinit var model: AppModel
@@ -106,6 +107,7 @@ class MainActivity : ComponentActivity() {
         isForeground = true
         model.resumeTrailer()
         model.onResume()
+        model.checkForUpdate()
     }
 
     override fun onPause() {
@@ -161,6 +163,7 @@ fun AppRoot(model: AppModel, exit: () -> Unit) {
                 LoadingOverlay(req)
                 BackHandler { model.cancelLoading() }
             }
+            model.updateStatus?.let { UpdateBanner(it, model.updateProgress) }
         }
     }
 }

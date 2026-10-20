@@ -286,9 +286,15 @@ class AppModel(private val activity: MainActivity) {
         }
     }
 
+    private var heroDebounce: Job? = null
+
     fun onCardFocus(b: BrowseState, key: String, item: CardItem) {
         b.lastFocusKey = key
-        setHero(b, item)
+        heroDebounce?.cancel()
+        heroDebounce = scope.launch {
+            delay(140)
+            setHero(b, item)
+        }
     }
 
     private fun setHero(b: BrowseState, item: CardItem) {
@@ -299,7 +305,7 @@ class AppModel(private val activity: MainActivity) {
         b.heroMeta = cached
         if (cached == null) {
             b.heroJob = scope.launch {
-                delay(300)
+                delay(120)
                 val m = Repo.meta(item.meta.type, item.meta.id)
                 if (b.hero?.meta?.id == item.meta.id) b.heroMeta = m
             }

@@ -1,12 +1,14 @@
 package com.maxim.marquee.data
 
 import android.util.LruCache
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
@@ -97,7 +99,7 @@ object Repo {
     suspend fun catalog(a: Addon, c: Catalog, skip: Int = 0): List<MetaItem> {
         val extra = if (skip > 0) "/skip=$skip" else ""
         val o = Http.getJson("${a.base}/catalog/${c.type}/${enc(c.id)}$extra.json") ?: return emptyList()
-        return o.arr("metas").objects().mapNotNull { MetaItem.parse(it, c.type) }
+        return withContext(Dispatchers.Default) { o.arr("metas").objects().mapNotNull { MetaItem.parse(it, c.type) } }
     }
 
     fun cachedMeta(type: String, id: String): MetaItem? = metaCache.get("$type/$id")
@@ -106,7 +108,7 @@ object Repo {
         cachedMeta(type, id)?.let { return it }
         for (a in addons.filter { it.supports("meta", type, id) }) {
             val o = Http.getJson("${a.base}/meta/$type/${enc(id)}.json")?.obj("meta") ?: continue
-            val m = MetaItem.parse(o, type) ?: continue
+            val m = withContext(Dispatchers.Default) { MetaItem.parse(o, type) } ?: continue
             metaCache.put("$type/$id", m)
             return m
         }
@@ -115,8 +117,9 @@ object Repo {
 
     private suspend fun fetchStreams(a: Addon, type: String, videoId: String): List<StreamItem> =
         withTimeoutOrNull(25_000) {
-            Http.getJson("${a.base}/stream/$type/${enc(videoId)}.json")
-                ?.arr("streams").objects().mapNotNull { StreamItem.parse(it, a.name) }
+            Http.getMapped("${a.base}/stream/$type/${enc(videoId)}.json") { o ->
+                o.arr("streams").objects().mapNotNull { StreamItem.parse(it, a.name) }
+            }
         } ?: emptyList()
 
     private fun streamAddons(type: String, videoId: String) =
@@ -138,8 +141,9 @@ object Repo {
         addons.filter { it.supports("subtitles", type, videoId) }.map { a ->
             async {
                 withTimeoutOrNull(6_000) {
-                    Http.getJson("${a.base}/subtitles/$type/${enc(videoId)}.json")
-                        ?.arr("subtitles").objects().mapNotNull { SubTrack.parse(it, a.name) }
+                    Http.getMapped("${a.base}/subtitles/$type/${enc(videoId)}.json") { o ->
+                        o.arr("subtitles").objects().mapNotNull { SubTrack.parse(it, a.name) }
+                    }
                 } ?: emptyList()
             }
         }.awaitAll().flatten()
@@ -150,9 +154,9 @@ object Repo {
         addons.flatMap { a -> a.catalogs.filter { it.supportsSearch }.map { a to it } }
             .map { (a, c) ->
                 async {
-                    val items = Http.getJson("${a.base}/catalog/${c.type}/${enc(c.id)}/search=$q.json")
-                        ?.arr("metas").objects().mapNotNull { MetaItem.parse(it, c.type) }
-                        ?: emptyList()
+                    val items = Http.getMapped("${a.base}/catalog/${c.type}/${enc(c.id)}/search=$q.json") { o ->
+                        o.arr("metas").objects().mapNotNull { MetaItem.parse(it, c.type) }
+                    } ?: emptyList()
                     "${typeLabel(c.type)} · ${a.name}" to items
                 }
             }.awaitAll().filter { it.second.isNotEmpty() }
@@ -160,7 +164,10 @@ object Repo {
 
     suspend fun library(): List<LibEntry> {
         val key = Store.authKey ?: return emptyList()
-        return safe { StremioApi.library(key).mapNotNull { LibEntry.parse(it) } } ?: emptyList()
+        return safe {
+            val raw = StremioApi.library(key)
+            withContext(Dispatchers.Default) { raw.mapNotNull { LibEntry.parse(it) } }
+        } ?: emptyList()
     }
 
     /**

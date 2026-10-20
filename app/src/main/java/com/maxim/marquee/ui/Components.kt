@@ -1,7 +1,10 @@
 package com.maxim.marquee.ui
 
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -86,7 +89,7 @@ fun Tile(
 ) {
     var focused by remember { mutableStateOf(false) }
     var longFired by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (focused) focusedScale else 1f, label = "tileScale")
+    val scale by animateFloatAsState(if (focused) focusedScale else 1f, tween(110, easing = FastOutSlowInEasing), label = "tileScale")
     val interaction = remember { MutableInteractionSource() }
     Box(
         modifier
@@ -226,7 +229,7 @@ fun ActionButton(
 @Composable
 fun Backdrop(url: String?, modifier: Modifier = Modifier) {
     Box(modifier) {
-        Crossfade(targetState = url, label = "backdrop") { u ->
+        Crossfade(targetState = url, animationSpec = tween(220), label = "backdrop") { u ->
             if (u != null) {
                 AsyncImage(
                     model = u,
@@ -299,6 +302,9 @@ fun Centered(text: String, sub: String? = null) {
 /** Keeps the focused item pinned at a fixed offset from the start of a list (Netflix-style rows). */
 @OptIn(ExperimentalFoundationApi::class)
 class PivotSpec(private val leadingPx: Float) : BringIntoViewSpec {
+    // Short, decisive scroll (the default spring feels floaty with a remote).
+    override val scrollAnimationSpec: AnimationSpec<Float> = tween(170, easing = FastOutSlowInEasing)
+
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
         offset - leadingPx
 }

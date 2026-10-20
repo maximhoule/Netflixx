@@ -34,6 +34,17 @@ object Http {
         }
     }
 
+    /** GET + transform, both off the main thread. */
+    suspend fun <T> getMapped(url: String, map: (JSONObject) -> T): T? = withContext(Dispatchers.IO) {
+        safe {
+            val req = Request.Builder().url(url).header("User-Agent", USER_AGENT).build()
+            client.newCall(req).execute().use { r ->
+                val text = r.body?.string()
+                if (!r.isSuccessful || text.isNullOrBlank()) null else map(JSONObject(text))
+            }
+        }
+    }
+
     /** POST JSON; throws IOException on network or parse failure. */
     suspend fun postJson(url: String, body: JSONObject): JSONObject = withContext(Dispatchers.IO) {
         val req = Request.Builder()

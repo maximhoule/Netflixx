@@ -30,7 +30,9 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 makes Compose noticeably faster on TV boxes.
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("marquee")
         }
         debug {
@@ -68,6 +70,8 @@ dependencies {
     implementation("androidx.compose.material:material-icons-core")
 
     implementation("androidx.core:core-ktx:1.13.1")
+    // Installs the bundled Compose baseline profiles on sideloaded installs: pre-compiled UI code, smoother from first launch.
+    implementation("androidx.profileinstaller:profileinstaller:1.3.1")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")

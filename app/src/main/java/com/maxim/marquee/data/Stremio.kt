@@ -58,6 +58,11 @@ object StremioApi {
                 .put("ids", JSONArray().put(id)).put("all", false),
         ).arr("result").objects().firstOrNull()
 
+    /** Replaces the account's addon list (used to copy addons into a new profile's account). */
+    suspend fun setAddonCollection(authKey: String, addons: JSONArray) {
+        call("addonCollectionSet", JSONObject().put("type", "AddonCollectionSet").put("authKey", authKey).put("addons", addons))
+    }
+
     suspend fun putLibraryItem(authKey: String, item: JSONObject) {
         call(
             "datastorePut",
@@ -81,8 +86,34 @@ object Repo {
         arr.objects().mapNotNull { Addon.parse(it) }.filterNot { it.isLocal }
 
     fun loadCachedAddons() {
-        val json = Store.addonsJson ?: return
+        val json = Store.addonsJson ?: run { addons = emptyList(); return }
         safe { addons = parseAddons(JSONArray(json)) }
+    }
+
+    /** Forget the previous profile's addons. */
+    fun reset() {
+        addons = emptyList()
+    }
+
+    /**
+     * The catalog that best represents "what's popular right now" for a type: a trending /
+     * popular / top catalog, preferring Cinemeta's. Used for the Top 10 rows.
+     */
+    fun popularCatalog(type: String): Pair<Addon, Catalog>? {
+        val all = boardCatalogs(type)
+        fun score(a: Addon, c: Catalog): Int {
+            val id = c.id.lowercase(); val n = c.name.lowercase()
+            var s = when {
+                id.contains("trending") || n.contains("trending") -> 30
+                id == "top" || n == "popular" || n.startsWith("popular") -> 25
+                id.contains("popular") || n.contains("popular") -> 20
+                id.contains("top") || n.startsWith("top") -> 10
+                else -> 0
+            }
+            if (s > 0 && a.id == "com.linvo.cinemeta") s += 5
+            return s
+        }
+        return all.map { (a, c) -> Triple(a, c, score(a, c)) }.filter { it.third > 0 }.maxByOrNull { it.third }?.let { it.first to it.second }
     }
 
     suspend fun refreshAddons() {

@@ -58,6 +58,20 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.TextStyle
 import coil.compose.AsyncImage
 import com.maxim.marquee.data.CardItem
 import com.maxim.marquee.data.MetaItem
@@ -83,6 +97,7 @@ fun Tile(
     border: Boolean = true,
     focusRequester: FocusRequester? = null,
     onFocus: () -> Unit = {},
+    onFocusChange: ((Boolean) -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
     content: @Composable BoxScope.(focused: Boolean) -> Unit,
@@ -99,6 +114,7 @@ fun Tile(
             .onFocusChanged {
                 val f = it.isFocused
                 if (f && !focused) onFocus()
+                if (f != focused) onFocusChange?.invoke(f)
                 focused = f
             }
             .onPreviewKeyEvent { e ->
@@ -169,12 +185,36 @@ fun PosterCard(
     onLongClick: (() -> Unit)? = null,
     shape: CardShape = CardShape.POSTER,
     onImageAspect: ((Float) -> Unit)? = null,
+    /** Red label along the bottom ("New Episode", "Recently Added"…). */
+    ribbon: String? = null,
+    /** Shows the red TOP 10 corner badge. */
+    topRank: Int? = null,
+    /** Widen into a landscape preview after resting on the card (portrait cards only). */
+    expandable: Boolean = false,
     onClick: () -> Unit,
 ) {
+    val baseW = if (shape == CardShape.POSTER) width else shape.width
+    val h = baseW / shape.aspect
+    val canExpand = expandable && shape == CardShape.POSTER
+    var focused by remember { mutableStateOf(false) }
+    var expanded by remember { mutableStateOf(false) }
+    if (canExpand) {
+        LaunchedEffect(focused) {
+            if (focused) {
+                kotlinx.coroutines.delay(900)
+                expanded = true
+            } else {
+                expanded = false
+            }
+        }
+    }
+    val w by animateDpAsState(if (expanded) h * 16f / 9f else baseW, tween(230, easing = FastOutSlowInEasing), label = "cardWidth")
     Tile(
-        modifier = Modifier.width(if (shape == CardShape.POSTER) width else shape.width).aspectRatio(shape.aspect),
+        modifier = Modifier.width(w).height(h),
+        focusedScale = if (canExpand) 1.05f else 1.08f,
         focusRequester = focusRequester,
         onFocus = onFocus,
+        onFocusChange = { focused = it },
         onLongClick = onLongClick,
         onClick = onClick,
     ) {
@@ -197,25 +237,141 @@ fun PosterCard(
                     val sz = st.painter.intrinsicSize
                     if (onImageAspect != null && sz.width > 0f && sz.height > 0f) onImageAspect(sz.width / sz.height)
                 },
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.width(baseW).fillMaxHeight(),
             )
         }
-        item.badge?.let {
-            Text(
-                it,
-                color = Color.White,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(6.dp)
-                    .background(Color(0xCC000000), RoundedCornerShape(3.dp))
-                    .padding(horizontal = 5.dp, vertical = 2.dp),
-            )
+        if (canExpand && (expanded || w > baseW + 1.dp)) {
+            ExpandedPreview(item, Modifier.fillMaxSize().graphicsLayer { alpha = ((w - baseW) / (h * 16f / 9f - baseW)).coerceIn(0f, 1f) })
+        }
+        if (!expanded) {
+            item.badge?.let {
+                Text(
+                    it,
+                    color = Color.White,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .background(Color(0xCC000000), RoundedCornerShape(3.dp))
+                        .padding(horizontal = 5.dp, vertical = 2.dp),
+                )
+            }
+            if (topRank != null) TopBadge(Modifier.align(Alignment.TopEnd))
+            if (ribbon != null && item.progress == null) Ribbon(ribbon, Modifier.align(Alignment.BottomCenter))
         }
         item.progress?.let {
             ProgressLine(it, Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(8.dp))
         }
+    }
+}
+
+/** The wide card: backdrop, logo and a line of facts. */
+@Composable
+private fun ExpandedPreview(item: CardItem, modifier: Modifier) {
+    val m0 = item.meta
+    var full by remember(m0.id) { mutableStateOf(com.maxim.marquee.data.Repo.cachedMeta(m0.type, m0.id)) }
+    LaunchedEffect(m0.id) {
+        if (full == null) full = com.maxim.marquee.data.Repo.meta(m0.type, m0.id)
+    }
+    val m = full ?: m0
+    Box(modifier.background(C.Surface)) {
+        val bg = m.background ?: m0.background
+        if (bg != null) {
+            AsyncImage(bg, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        }
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.35f to Color.Transparent, 1f to Color(0xE6000000))))
+        Column(Modifier.align(Alignment.BottomStart).padding(horizontal = 12.dp, vertical = 10.dp)) {
+            TitleArt(m, small = true)
+            Spacer(Modifier.height(6.dp))
+            val facts = listOfNotNull(
+                m.imdbRating?.let { "★ $it" },
+                m.releaseInfo,
+                if (m.isSeries && m.seasonCount > 0) seasonsLabel(m.seasonCount) else formatRuntime(m.runtime),
+                m.genres.firstOrNull(),
+            )
+            Text(facts.joinToString("  ·  "), color = Color(0xFFE6E6E6), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            item.badge?.let { Text(it, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
+        }
+    }
+}
+
+/** Netflix's little red "TOP 10" square. */
+@Composable
+fun TopBadge(modifier: Modifier = Modifier) {
+    Column(
+        modifier.background(C.Red, RoundedCornerShape(bottomStart = 4.dp)).padding(horizontal = 4.dp, vertical = 2.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("TOP", color = Color.White, fontSize = 7.sp, fontWeight = FontWeight.Bold, lineHeight = 8.sp)
+        Text("10", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Black, lineHeight = 12.sp)
+    }
+}
+
+@Composable
+fun Ribbon(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text,
+        color = Color.White,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+        modifier = modifier
+            .padding(bottom = 8.dp)
+            .background(C.Red, RoundedCornerShape(3.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
+}
+
+/** A Top 10 entry: the big outlined number with the poster tucked against it. */
+@Composable
+fun Top10Card(
+    rank: Int,
+    item: CardItem,
+    focusRequester: FocusRequester?,
+    onFocus: () -> Unit,
+    onLongClick: () -> Unit,
+    onClick: () -> Unit,
+) {
+    val h = CardShape.POSTER.width / CardShape.POSTER.aspect
+    Row(verticalAlignment = Alignment.Bottom) {
+        Box(Modifier.height(h).width(if (rank >= 10) 112.dp else 70.dp), contentAlignment = Alignment.BottomEnd) {
+            Text(
+                rank.toString(),
+                style = TextStyle(
+                    color = Color(0xFF6B6B6B),
+                    fontSize = 132.sp,
+                    lineHeight = 132.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = (-6).sp,
+                    drawStyle = Stroke(width = 5f),
+                ),
+                maxLines = 1,
+                modifier = Modifier.offset(x = 14.dp, y = 14.dp),
+            )
+        }
+        PosterCard(
+            item = item,
+            width = CardShape.POSTER.width,
+            focusRequester = focusRequester,
+            onFocus = onFocus,
+            onLongClick = onLongClick,
+            onClick = onClick,
+        )
+    }
+}
+
+fun seasonsLabel(n: Int) = if (n == 1) "1 Season" else "$n Seasons"
+
+/** "142 min" → "2h 22m". Leaves anything it doesn't understand as it is. */
+fun formatRuntime(r: String?): String? {
+    if (r.isNullOrBlank()) return null
+    val mins = Regex("""^\s*(\d+)\s*(min|m|minutes)?\s*$""", RegexOption.IGNORE_CASE).find(r)?.groupValues?.get(1)?.toIntOrNull()
+        ?: return r
+    return when {
+        mins >= 60 && mins % 60 == 0 -> "${mins / 60}h"
+        mins >= 60 -> "${mins / 60}h ${mins % 60}m"
+        else -> "${mins}m"
     }
 }
 
@@ -293,29 +449,137 @@ fun infoLine(m: MetaItem): String {
     return parts.joinToString("   ·   ")
 }
 
+/**
+ * Netflix-style facts row: IMDb score, year, boxed age rating, seasons or runtime, genres.
+ * [cert] overrides the title's own age rating (e.g. from TMDB).
+ */
 @Composable
-fun TitleArt(meta: MetaItem, modifier: Modifier = Modifier, big: Boolean = true) {
-    var logoFailed by remember(meta.logo) { mutableStateOf(false) }
-    if (meta.logo != null && !logoFailed) {
+fun InfoRow(m: MetaItem, cert: String? = null, leading: String? = null) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        val gap = Modifier.width(12.dp)
+        leading?.let {
+            Text(it, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Spacer(gap)
+        }
+        m.imdbRating?.let { r ->
+            Text(
+                "IMDb", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Black,
+                modifier = Modifier.background(Color(0xFFF5C518), RoundedCornerShape(3.dp)).padding(horizontal = 4.dp, vertical = 1.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(r, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(gap)
+        }
+        m.releaseInfo?.let {
+            Text(it, color = C.Dim, fontSize = 15.sp)
+            Spacer(gap)
+        }
+        (cert ?: m.certification)?.let {
+            Text(
+                it, color = Color(0xFFDDDDDD), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.border(1.dp, Color(0xFF9A9A9A), RoundedCornerShape(2.dp)).padding(horizontal = 5.dp, vertical = 1.dp),
+            )
+            Spacer(gap)
+        }
+        val length = if (m.isSeries && m.seasonCount > 0) seasonsLabel(m.seasonCount) else formatRuntime(m.runtime)
+        length?.let {
+            Text(it, color = C.Dim, fontSize = 15.sp)
+            Spacer(gap)
+        }
+        if (m.genres.isNotEmpty()) {
+            Text(m.genres.take(3).joinToString(" • "), color = C.Dim, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/**
+ * The title as logo artwork when there is one (the addon's, TMDB's, or the community artwork
+ * for IMDb titles), falling back to text. [extraLogo] is tried after the addon's own logo.
+ */
+@Composable
+fun TitleArt(meta: MetaItem, modifier: Modifier = Modifier, big: Boolean = true, small: Boolean = false, extraLogo: String? = null) {
+    val candidates = remember(meta.id, meta.logo, extraLogo) { listOfNotNull(meta.logo, extraLogo, meta.logoUrl).distinct() }
+    var attempt by remember(candidates) { mutableIntStateOf(0) }
+    val url = candidates.getOrNull(attempt)
+    val (maxW, maxH) = when {
+        small -> 170.dp to 44.dp
+        big -> 420.dp to 120.dp
+        else -> 340.dp to 84.dp
+    }
+    if (url != null) {
         AsyncImage(
-            model = meta.logo,
+            model = url,
             contentDescription = meta.name,
             contentScale = ContentScale.Fit,
-            alignment = Alignment.CenterStart,
-            onError = { logoFailed = true },
-            modifier = modifier.height(if (big) 100.dp else 80.dp).width(380.dp),
+            alignment = Alignment.BottomStart,
+            onError = { attempt++ },
+            modifier = modifier.height(maxH).width(maxW),
         )
     } else {
         Text(
             meta.name,
             color = Color.White,
-            fontSize = if (big) 40.sp else 32.sp,
+            fontSize = if (small) 17.sp else if (big) 40.sp else 32.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            lineHeight = if (big) 44.sp else 36.sp,
+            lineHeight = if (small) 20.sp else if (big) 44.sp else 36.sp,
             modifier = modifier,
         )
+    }
+}
+
+// ---------------------------------------------------------------- loading placeholders
+
+@Composable
+fun rememberShimmer(): State<Float> =
+    rememberInfiniteTransition(label = "shimmer").animateFloat(
+        initialValue = -0.6f,
+        targetValue = 1.6f,
+        animationSpec = infiniteRepeatable(tween(1300, easing = LinearEasing)),
+        label = "shimmerX",
+    )
+
+/** Grey box with a soft light sweeping across it. Animates in the draw phase only (cheap). */
+fun Modifier.shimmer(progress: State<Float>, shape: Shape = RoundedCornerShape(6.dp)): Modifier =
+    this.clip(shape).drawBehind {
+        drawRect(Color(0xFF1C1C1C))
+        val x = progress.value * size.width
+        val band = size.width * 0.6f
+        drawRect(
+            Brush.linearGradient(
+                listOf(Color.Transparent, Color(0x14FFFFFF), Color.Transparent),
+                start = Offset(x - band, 0f),
+                end = Offset(x, size.height * 0.3f),
+            ),
+        )
+    }
+
+@Composable
+fun SkeletonRow(shape: CardShape = CardShape.POSTER, withTitle: Boolean = false) {
+    val p = rememberShimmer()
+    Column(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+        if (withTitle) Box(Modifier.padding(start = 14.dp, top = 10.dp).width(180.dp).height(16.dp).shimmer(p, RoundedCornerShape(4.dp)))
+        Row(Modifier.padding(14.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            repeat(if (shape == CardShape.POSTER) 8 else 4) {
+                Box(Modifier.width(shape.width).height(shape.width / shape.aspect).shimmer(p))
+            }
+        }
+    }
+}
+
+/** Billboard placeholder until the first title is ready. */
+@Composable
+fun SkeletonHero(modifier: Modifier = Modifier) {
+    val p = rememberShimmer()
+    Column(modifier) {
+        Box(Modifier.width(360.dp).height(70.dp).shimmer(p))
+        Spacer(Modifier.height(14.dp))
+        Box(Modifier.width(300.dp).height(14.dp).shimmer(p, RoundedCornerShape(4.dp)))
+        Spacer(Modifier.height(10.dp))
+        Box(Modifier.width(520.dp).height(14.dp).shimmer(p, RoundedCornerShape(4.dp)))
+        Spacer(Modifier.height(8.dp))
+        Box(Modifier.width(460.dp).height(14.dp).shimmer(p, RoundedCornerShape(4.dp)))
     }
 }
 

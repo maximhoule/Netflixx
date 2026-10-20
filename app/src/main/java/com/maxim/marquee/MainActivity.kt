@@ -29,9 +29,20 @@ import com.maxim.marquee.ui.LoginScreen
 import com.maxim.marquee.ui.MainShell
 import com.maxim.marquee.ui.StreamsScreen
 import com.maxim.marquee.ui.UpdateBanner
+import com.maxim.marquee.ui.OfflineBanner
+import com.maxim.marquee.ui.ProblemScreen
+import com.maxim.marquee.ui.ProfilesScreen
+import com.maxim.marquee.ui.ProfileEditScreen
+import com.maxim.marquee.ui.CopyAddonsOverlay
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        /** Set once someone has picked a profile in this app session, so switching doesn't ask again. */
+        var profileChosen = false
+    }
+
     lateinit var model: AppModel
+    private var unwatchNetwork: () -> Unit = {}
 
     val playerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
         model.onPlayerResult(res.data)
@@ -69,7 +80,22 @@ class MainActivity : ComponentActivity() {
             false
         }
         setContent { AppRoot(model) { finish() } }
-        model.start()
+        // "Who's watching?" when the app opens and there's more than one profile.
+        if (!profileChosen && com.maxim.marquee.data.Store.profiles.size > 1) {
+            model.profileGate = ProfileGate.PICK
+        } else {
+            model.start()
+        }
+        profileChosen = true
+        unwatchNetwork = com.maxim.marquee.data.Net.watch(this) { up -> runOnUiThread { model.onNetwork(up) } }
+    }
+
+    override fun onDestroy() {
+        // Leaving the app (not just switching profile): ask "Who's watching?" next time.
+        if (isFinishing) profileChosen = false
+        unwatchNetwork()
+        model.destroy()
+        super.onDestroy()
     }
 
     /** True while OK is physically held down. */
@@ -129,8 +155,12 @@ fun AppRoot(model: AppModel, exit: () -> Unit) {
                 // While a source is being found, swallow remote presses (Back still cancels).
                 .onPreviewKeyEvent { model.loading != null && it.key != Key.Back },
         ) {
-            if (!model.loggedIn) {
+            if (model.profileGate != ProfileGate.NONE || model.profileEdit != null) {
+                if (model.profileEdit != null) ProfileEditScreen(model) else ProfilesScreen(model)
+                BackHandler { if (!model.profileBack()) exit() }
+            } else if (!model.loggedIn) {
                 LoginScreen(model)
+                if (model.profiles.size > 1) BackHandler { model.openProfiles() }
             } else {
                 val top = model.stack.lastOrNull()
                 key(top) {
@@ -141,6 +171,7 @@ fun AppRoot(model: AppModel, exit: () -> Unit) {
                         is Screen.EmbyLogin -> EmbyLoginScreen(model)
                         is Screen.PhoneSetup -> com.maxim.marquee.ui.PhoneSetupScreen(model)
                         is Screen.TraktActivate -> com.maxim.marquee.ui.TraktActivateScreen(model)
+                        is Screen.Problem -> ProblemScreen(model, top)
                     }
                 }
                 // Back: close the top screen; on the home screens go to the menu first, then exit.
@@ -157,6 +188,11 @@ fun AppRoot(model: AppModel, exit: () -> Unit) {
                         else -> exit()
                     }
                 }
+            }
+            if (model.loggedIn && !model.online && model.profileGate == ProfileGate.NONE) OfflineBanner()
+            model.offerCopyFrom?.let { p ->
+                CopyAddonsOverlay(model, p)
+                BackHandler { model.offerCopyFrom = null }
             }
             if (model.cardMenu != null) {
                 CardMenuOverlay(model)

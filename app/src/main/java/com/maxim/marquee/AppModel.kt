@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.getValue
@@ -32,6 +33,8 @@ import com.maxim.marquee.data.StremioApi
 import com.maxim.marquee.data.SubTrack
 import com.maxim.marquee.data.Video
 import com.maxim.marquee.data.episodeLabel
+import com.maxim.marquee.data.looksLikeError
+import com.maxim.marquee.data.Net
 import com.maxim.marquee.data.typeLabel
 import com.maxim.marquee.ui.MovieIcon
 import com.maxim.marquee.ui.TvIcon
@@ -47,6 +50,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.coroutineContext
 
 enum class Tab(val label: String, val icon: ImageVector) {
+    PROFILE("Profiles", Icons.Filled.Person),
     SEARCH("Search", Icons.Filled.Search),
     HOME("Home", Icons.Filled.Home),
     SERIES("Series", TvIcon),
@@ -74,7 +78,13 @@ sealed class Screen {
     data object EmbyLogin : Screen()
     data object PhoneSetup : Screen()
     data object TraktActivate : Screen()
+    /** A friendly explanation when something goes wrong, with ways forward. */
+    data class Problem(val kind: Kind, val message: String? = null, val req: PlayReq? = null) : Screen() {
+        enum class Kind { OFFLINE, NO_SOURCES, SERVICE, PLAYBACK }
+    }
 }
+
+enum class ProfileGate { NONE, PICK, MANAGE }
 
 sealed class RowSource {
     data object Continue : RowSource()
@@ -86,6 +96,8 @@ sealed class RowSource {
     data object NewEpisodes : RowSource()
     /** kind: "watchlist" or "recs" */
     data class Trakt(val kind: String) : RowSource()
+    /** Netflix-style Top 10 for "movie" or "series". */
+    data class Top10(val type: String) : RowSource()
 }
 
 data class RowModel(val key: String, val title: String, val source: RowSource)
@@ -156,6 +168,28 @@ class AppModel(private val activity: MainActivity) {
     var av1Hardware = false
     var handledTick = 0
 
+    // ---- profiles ----
+    /** The profile this screen was built for (switching rebuilds the activity). */
+    val loadedProfileId = Store.activeProfileId
+    var profiles by mutableStateOf(Store.profiles)
+    var profileGate by mutableStateOf(ProfileGate.NONE)
+    /** Profile being edited; id -1 = a new one. */
+    var profileEdit by mutableStateOf<com.maxim.marquee.data.Profile?>(null)
+    /** After signing a new profile in to an account with no stream addons: offer to copy another profile's. */
+    var offerCopyFrom by mutableStateOf<com.maxim.marquee.data.Profile?>(null)
+    var started = false
+        private set
+
+    // ---- network / problems ----
+    var online by mutableStateOf(true)
+    var addonError by mutableStateOf<String?>(null)
+
+    // ---- Top 10 and poster ribbons ----
+    /** Title id → rank (1-10) for the "TOP 10" corner badge. */
+    var top10 by mutableStateOf<Map<String, Int>>(emptyMap())
+    /** Title id → "New Episode" / "New Season" / … */
+    var ribbons by mutableStateOf<Map<String, String>>(emptyMap())
+
     val browse = mapOf(
         Tab.HOME to BrowseState(null, true),
         Tab.SERIES to BrowseState("series", false),
@@ -173,6 +207,10 @@ class AppModel(private val activity: MainActivity) {
     fun pauseTrailer() = trailerPlayer?.onPause()
     fun resumeTrailer() = trailerPlayer?.onResume()
     fun stopTrailer() = trailerPlayer?.stop()
+    fun destroy() {
+        trailerPlayer?.destroy()
+        trailerPlayer = null
+    }
 
     private var playJob: Job? = null
     private var pending: Pending? = null
@@ -187,6 +225,8 @@ class AppModel(private val activity: MainActivity) {
         val addonSubs: List<SubTrack>,
         val external: Boolean = false,
         val autoChain: Int = 0,
+        /** HTTP errors seen while trying sources (401/403 usually mean the service refused). */
+        val httpCodes: List<Int> = emptyList(),
     )
 
     fun toast(msg: String) = Toast.makeText(activity, msg, Toast.LENGTH_SHORT).show()
@@ -194,18 +234,21 @@ class AppModel(private val activity: MainActivity) {
     // ---------------- session ----------------
 
     fun start() {
+        started = true
         if (!loggedIn) return
+        online = Net.online(activity)
         Repo.loadCachedAddons()
         addonCount = Repo.addons.size
         rebuildRows()
         scope.launch {
             syncing = true
+            addonError = null
             try {
                 Repo.refreshAddons()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (Repo.addons.isEmpty()) toast("Couldn't load your addons: ${e.message}")
+                if (Repo.addons.isEmpty()) addonError = e.message ?: "Stremio didn't answer"
             }
             addonCount = Repo.addons.size
             loadEmbyLibraries()
@@ -252,6 +295,7 @@ class AppModel(private val activity: MainActivity) {
                 Store.email = email.trim()
                 loggedIn = true
                 start()
+                offerAddonCopy()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -277,15 +321,17 @@ class AppModel(private val activity: MainActivity) {
     }
 
     /** Back after a long break (the TV kept the app in memory): reload everything. */
-    private fun refreshAll() {
+    fun refreshAll() {
         scope.launch {
+            online = Net.online(activity)
+            addonError = null
             syncing = true
             try {
                 Repo.refreshAddons()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // keep what we have
+                if (Repo.addons.isEmpty()) addonError = e.message ?: "Stremio didn't answer"
             }
             addonCount = Repo.addons.size
             loadEmbyLibraries()
@@ -295,7 +341,20 @@ class AppModel(private val activity: MainActivity) {
         }
     }
 
+    /** Connection lost or back. Coming back reloads whatever failed while offline. */
+    fun onNetwork(available: Boolean) {
+        val was = online
+        online = available
+        if (available && !was && started && loggedIn) refreshAll()
+    }
+
     fun onResume() {
+        // Back after a long time away: ask who's watching, like Netflix.
+        if (started && pausedAt > 0 && System.currentTimeMillis() - pausedAt > 4 * 3_600_000L &&
+            profiles.size > 1 && profileGate == ProfileGate.NONE
+        ) {
+            profileGate = ProfileGate.PICK
+        }
         if (loggedIn && pausedAt > 0 && System.currentTimeMillis() - pausedAt > 30 * 60_000 && stack.isEmpty()) {
             pausedAt = 0
             refreshAll()
@@ -362,16 +421,27 @@ class AppModel(private val activity: MainActivity) {
                 }
             }
             // Rows with the same name from different addons (e.g. two "Popular Movies") become one row.
-            Repo.boardCatalogs(b.type)
+            val catalogRows = Repo.boardCatalogs(b.type)
                 .groupBy { (_, c) -> rowTitle(c).lowercase() }
                 .values
-                .forEachIndexed { i, group ->
+                .mapIndexed { i, group ->
                     val (a, c) = group.first()
-                    defs += RowModel(
-                        "${a.transportUrl.hashCode()}|${c.type}|${c.id}|$i", rowTitle(c),
-                        RowSource.Cat(a, c, group.drop(1)),
-                    )
+                    RowModel("${a.transportUrl.hashCode()}|${c.type}|${c.id}|$i", rowTitle(c), RowSource.Cat(a, c, group.drop(1)))
                 }
+                .toMutableList()
+            // Top 10 rows a little way down, like Netflix.
+            val today = if (com.maxim.marquee.data.Trakt.hasKeys) " Today" else ""
+            fun top10Row(type: String) = RowModel(
+                "top10-$type", if (type == "series") "Top 10 Shows$today" else "Top 10 Movies$today", RowSource.Top10(type),
+            )
+            when (b.type) {
+                null -> {
+                    catalogRows.add(minOf(5, catalogRows.size), top10Row("movie"))
+                    catalogRows.add(minOf(2, catalogRows.size), top10Row("series"))
+                }
+                else -> catalogRows.add(minOf(1, catalogRows.size), top10Row(b.type))
+            }
+            if (Repo.addons.isNotEmpty()) defs += catalogRows
             b.reset(defs)
             b.signature = sig
             if (b.withContinue) {
@@ -390,6 +460,15 @@ class AppModel(private val activity: MainActivity) {
             is RowSource.Static -> b.loaded[row.key] = true
             is RowSource.NewEpisodes -> {
                 b.rowItems[row.key] = newEpisodes; b.loaded[row.key] = true; afterRowLoaded(b)
+            }
+            is RowSource.Top10 -> {
+                scope.launch {
+                    val items = top10For(src.type).map { CardItem(it) }
+                    b.rowItems[row.key] = items
+                    b.loaded[row.key] = true
+                    top10 = top10 + items.mapIndexed { i, c -> c.meta.id to (i + 1) }
+                    afterRowLoaded(b)
+                }
             }
             is RowSource.Trakt -> {
                 scope.launch {
@@ -444,6 +523,27 @@ class AppModel(private val activity: MainActivity) {
         }
     }
 
+    private val top10Cache = HashMap<String, Pair<Long, List<MetaItem>>>()
+
+    /** Trending on Trakt when you have Trakt keys, otherwise the top of your most "popular" catalog. */
+    private suspend fun top10For(type: String): List<MetaItem> {
+        top10Cache[type]?.let { (t, list) -> if (System.currentTimeMillis() - t < 3 * 3_600_000L && list.isNotEmpty()) return list }
+        var list = com.maxim.marquee.data.Trakt.trending(type)
+        if (list.size < 10) {
+            list = Repo.popularCatalog(type)?.let { (a, c) -> Repo.catalog(a, c) } ?: emptyList()
+        }
+        list = list.filter { it.poster != null }.distinctBy { it.id }.take(10)
+        if (list.isNotEmpty()) top10Cache[type] = System.currentTimeMillis() to list
+        return list
+    }
+
+    /** Red ribbon on a poster: new episodes of a show you follow, or recently added to your server. */
+    fun ribbonFor(meta: MetaItem): String? {
+        ribbons[meta.id]?.let { return it }
+        if (meta.added > 0 && System.currentTimeMillis() - meta.added < 14L * 24 * 3_600_000) return "Recently Added"
+        return null
+    }
+
     private fun afterRowLoaded(b: BrowseState) {
         if (b.lastFocusKey == null && b.pendingFocusKey == null) b.pendingFocusKey = b.firstKey()
         if (b.hero == null) {
@@ -486,6 +586,9 @@ class AppModel(private val activity: MainActivity) {
     }
 
     fun selectTab(t: Tab) {
+        if (t == Tab.PROFILE) {
+            openProfiles(); return
+        }
         tab = t
         contentFocusTick++
     }
@@ -594,6 +697,13 @@ class AppModel(private val activity: MainActivity) {
                 }
             }
         }.awaitAll().filterNotNull()
+        ribbons = found.associate { (meta, first, fresh) ->
+            meta.id to when {
+                first.episode == 1 && first.season > 1 -> "New Season"
+                fresh.size > 1 -> "New Episodes"
+                else -> "New Episode"
+            }
+        }
         newEpisodes = found
             .sortedByDescending { (_, _, fresh) -> fresh.maxOf { it.released } }
             .map { (meta, first, fresh) ->
@@ -778,12 +888,22 @@ class AppModel(private val activity: MainActivity) {
         loading = req
         playJob = scope.launch {
             val subs = subsFor(req.type, req.videoId)
-            val streams = rank(streamsFor(req.type, req.videoId).await())
+            val all = streamsFor(req.type, req.videoId).await()
+            // Addons report problems (expired debrid, bad key…) as fake "streams": don't play those.
+            val (errors, real) = all.partition { it.looksLikeError() }
+            val streams = rank(real)
             if (streams.isEmpty()) {
                 streamCache.remove("${req.type}/${req.videoId}")
                 loading = null
-                toast("No playable sources found")
-                stack.add(Screen.Streams(req))
+                showProblem(
+                    when {
+                        !Net.online(activity) -> Screen.Problem.Kind.OFFLINE
+                        errors.isNotEmpty() -> Screen.Problem.Kind.SERVICE
+                        else -> Screen.Problem.Kind.NO_SOURCES
+                    },
+                    errors.firstOrNull()?.let { e -> listOf(e.name, e.title).joinToString("\n") { it.trim() }.trim() },
+                    req,
+                )
                 return@launch
             }
             launchStream(Pending(req, streams, 0, auto = true, attempts = 1, addonSubs = subs.await(), autoChain = autoChain))
@@ -797,6 +917,22 @@ class AppModel(private val activity: MainActivity) {
             val subs = subsFor(req.type, req.videoId).await()
             launchStream(Pending(req, streams, index, auto = false, attempts = 1, addonSubs = subs))
         }
+    }
+
+    fun showProblem(kind: Screen.Problem.Kind, message: String? = null, req: PlayReq? = null) {
+        if (stack.lastOrNull() is Screen.Problem) stack.removeAt(stack.lastIndex)
+        stack.add(Screen.Problem(kind, message, req))
+    }
+
+    /** "Try again" on a problem screen: look the sources up fresh. */
+    fun retry(p: Screen.Problem) {
+        back()
+        val req = p.req
+        if (req == null) {
+            refreshAll(); return
+        }
+        streamCache.remove("${req.type}/${req.videoId}")
+        play(req)
     }
 
     fun cancelLoading() {
@@ -850,6 +986,7 @@ class AppModel(private val activity: MainActivity) {
         val p = pending ?: return
         pending = null
         var outcome = data?.getStringExtra("outcome") ?: "exit"
+        val httpCode = data?.getIntExtra("httpCode", 0) ?: 0
         val outcomeVideo = data?.getStringExtra("videoId")
         val auto = data?.getBooleanExtra("auto", false) ?: false
 
@@ -884,13 +1021,22 @@ class AppModel(private val activity: MainActivity) {
 
         when (outcome) {
             "error" -> {
+                val codes = if (httpCode > 0) p.httpCodes + httpCode else p.httpCodes
                 if (p.auto && p.index + 1 < p.streams.size && p.attempts < 5) {
                     toast("That source didn't work — trying the next one")
                     loading = p.req
-                    playJob = scope.launch { launchStream(p.copy(index = p.index + 1, attempts = p.attempts + 1)) }
+                    playJob = scope.launch { launchStream(p.copy(index = p.index + 1, attempts = p.attempts + 1, httpCodes = codes)) }
                 } else {
-                    toast("Couldn't play this source")
-                    if (stack.lastOrNull() !is Screen.Streams) stack.add(Screen.Streams(p.req))
+                    val refused = codes.any { it == 401 || it == 402 || it == 403 }
+                    showProblem(
+                        when {
+                            !Net.online(activity) -> Screen.Problem.Kind.OFFLINE
+                            refused -> Screen.Problem.Kind.SERVICE
+                            else -> Screen.Problem.Kind.PLAYBACK
+                        },
+                        if (refused) "The video server answered \"access denied\" (HTTP ${codes.last { it in 401..403 }})." else null,
+                        p.req,
+                    )
                 }
             }
             "next", "episode" -> scope.launch {
@@ -1055,6 +1201,7 @@ class AppModel(private val activity: MainActivity) {
                 Store.email = email
                 loggedIn = true
                 start()
+                scope.launch { offerAddonCopy() }
                 lines += "✓ Stremio: signed in as $email"
             } catch (e: CancellationException) {
                 throw e
@@ -1089,6 +1236,82 @@ class AppModel(private val activity: MainActivity) {
         }
         if (lines.isEmpty()) lines += "Nothing to set up: fill in at least one section."
         return lines.joinToString("\n")
+    }
+
+    // ---------------- profiles ----------------
+
+    fun openProfiles() {
+        profiles = Store.profiles
+        profileGate = ProfileGate.PICK
+    }
+
+    fun pickProfile(p: com.maxim.marquee.data.Profile) {
+        if (p.id == loadedProfileId) {
+            profileGate = ProfileGate.NONE
+            if (!started) start()
+            return
+        }
+        switchProfile(p.id)
+    }
+
+    private fun switchProfile(id: Int) {
+        stopTrailer()
+        Store.switchProfile(id)
+        Repo.reset()
+        com.maxim.marquee.data.Emby.reset()
+        MainActivity.profileChosen = true
+        activity.recreate()
+    }
+
+    fun saveProfile(name: String, color: Int) {
+        val e = profileEdit ?: return
+        if (e.id < 0) Store.addProfile(name, color) else Store.updateProfile(e.copy(name = name.trim().ifEmpty { e.name }, color = color))
+        profiles = Store.profiles
+        profileEdit = null
+    }
+
+    fun deleteProfile(id: Int) {
+        Store.deleteProfile(id)
+        profiles = Store.profiles
+        profileEdit = null
+        if (profiles.size <= 1) profileGate = ProfileGate.PICK
+    }
+
+    /** Back on the profile screen: close it if the app is already showing, otherwise leave. */
+    fun profileBack(): Boolean {
+        if (profileEdit != null) { profileEdit = null; return true }
+        if (profileGate == ProfileGate.MANAGE) { profileGate = ProfileGate.PICK; return true }
+        if (started && Store.activeProfileId == loadedProfileId) { profileGate = ProfileGate.NONE; return true }
+        return false
+    }
+
+    /** Other profiles whose Stremio account has addons this one could copy. */
+    fun copySources(): List<com.maxim.marquee.data.Profile> = Store.profiles.filter { p ->
+        p.id != loadedProfileId && Store.addonsJsonOf(p.id) != null && Store.authKeyOf(p.id) != Store.authKey
+    }
+
+    /** A fresh account with no stream addons: offer the first profile's (Duck Streams etc.). */
+    private suspend fun offerAddonCopy() {
+        delay(2_500)
+        val hasStreams = Repo.addons.any { a -> a.resources.any { it.name == "stream" } && a.id != "com.linvo.cinemeta" }
+        if (!hasStreams) copySources().firstOrNull()?.let { offerCopyFrom = it }
+    }
+
+    fun copyAddonsFrom(p: com.maxim.marquee.data.Profile) {
+        offerCopyFrom = null
+        val json = Store.addonsJsonOf(p.id) ?: return
+        val key = Store.authKey ?: return
+        scope.launch {
+            try {
+                StremioApi.setAddonCollection(key, org.json.JSONArray(json))
+                toast("Copied ${p.name}'s addons")
+                refreshAll()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                toast("Couldn't copy addons: ${e.message}")
+            }
+        }
     }
 
     // ---------------- More Like This / collections ----------------

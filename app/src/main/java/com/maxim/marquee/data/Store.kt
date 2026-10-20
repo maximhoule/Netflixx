@@ -16,12 +16,88 @@ data class LocalProgress(
     val updated: Long,
 )
 
+data class Profile(val id: Int, val name: String, val color: Int)
+
 object Store {
+    /** The active profile's settings, account and progress. Profile 0 keeps the original file. */
     private lateinit var prefs: SharedPreferences
+    /** Shared by every profile: the profile list and device-wide settings. */
+    private lateinit var global: SharedPreferences
+    private lateinit var appCtx: Context
 
     fun init(ctx: Context) {
-        prefs = ctx.getSharedPreferences("marquee", Context.MODE_PRIVATE)
+        appCtx = ctx.applicationContext
+        global = ctx.getSharedPreferences("marquee_global", Context.MODE_PRIVATE)
+        prefs = prefsFor(activeProfileId)
     }
+
+    private fun prefsFor(id: Int): SharedPreferences =
+        appCtx.getSharedPreferences(if (id == 0) "marquee" else "marquee_p$id", Context.MODE_PRIVATE)
+
+    // ---- profiles ----
+
+    /** Avatar colours, Netflix-style. */
+    val profileColors = listOf(0xFFE21B2D, 0xFF2E7DF6, 0xFFF5B50E, 0xFF22A35A, 0xFF8E44D9, 0xFFEE6A1F, 0xFF16A6B8).map { it.toInt() }
+
+    val profiles: List<Profile>
+        get() {
+            val arr = safe { org.json.JSONArray(global.getString("profiles", null) ?: "[]") } ?: org.json.JSONArray()
+            val list = arr.objects().mapNotNull { o ->
+                val id = o.int("id") ?: return@mapNotNull null
+                Profile(id, o.str("name") ?: "Profile", o.optInt("color", profileColors[0]))
+            }
+            return list.ifEmpty { listOf(Profile(0, defaultName(), profileColors[0])) }
+        }
+
+    private fun defaultName(): String {
+        val email = prefsFor(0).getString("email", null) ?: return "Me"
+        val local = email.substringBefore('@').takeWhile { it.isLetter() }
+        return if (local.length in 2..12) local.replaceFirstChar { it.uppercase() } else "Me"
+    }
+
+    private fun saveProfiles(list: List<Profile>) {
+        val arr = org.json.JSONArray()
+        list.forEach { arr.put(JSONObject().put("id", it.id).put("name", it.name).put("color", it.color)) }
+        global.edit().putString("profiles", arr.toString()).apply()
+    }
+
+    var activeProfileId: Int
+        get() = global.getInt("activeProfile", 0)
+        private set(v) = global.edit().putInt("activeProfile", v).apply()
+
+    val activeProfile: Profile get() = profiles.firstOrNull { it.id == activeProfileId } ?: profiles.first()
+
+    fun addProfile(name: String, color: Int): Profile {
+        val list = profiles
+        val p = Profile((list.maxOfOrNull { it.id } ?: 0) + 1, name.trim().ifEmpty { "Profile" }, color)
+        saveProfiles(list + p)
+        return p
+    }
+
+    fun updateProfile(p: Profile) = saveProfiles(profiles.map { if (it.id == p.id) p else it })
+
+    /** Deletes a profile and everything it stored. The last remaining profile can't be deleted. */
+    fun deleteProfile(id: Int) {
+        val list = profiles
+        if (list.size <= 1) return
+        saveProfiles(list.filterNot { it.id == id })
+        prefsFor(id).edit().clear().apply()
+        if (activeProfileId == id) switchProfile(list.first { it.id != id }.id)
+    }
+
+    fun switchProfile(id: Int) {
+        activeProfileId = id
+        prefs = prefsFor(id)
+        synchronized(lock) { cache = null }
+    }
+
+    /** Raw addon list stored by another profile (for "copy addons"). */
+    fun addonsJsonOf(id: Int): String? = prefsFor(id).getString("addons", null)
+    fun authKeyOf(id: Int): String? = prefsFor(id).getString("authKey", null)
+
+    /** Device-wide value, falling back to what older builds stored in the first profile. */
+    private fun globalString(k: String): String? = global.getString(k, null) ?: prefsFor(0).getString(k, null)
+    private fun setGlobalString(k: String, v: String?) = global.edit().putString(k, v).apply()
 
     private fun bool(k: String, d: Boolean) = prefs.getBoolean(k, d)
     private fun setBool(k: String, v: Boolean) = prefs.edit().putBoolean(k, v).apply()
@@ -89,8 +165,13 @@ object Store {
         set(v) = prefs.edit().putInt("subStyle", v).apply()
 
     var autoUpdate: Boolean
-        get() = bool("autoUpdate", true)
-        set(v) = setBool("autoUpdate", v)
+        get() = global.getBoolean("autoUpdate", prefsFor(0).getBoolean("autoUpdate", true))
+        set(v) = global.edit().putBoolean("autoUpdate", v).apply()
+
+    /** Netflix-style cards that widen into a preview when you rest on them. */
+    var expandCards: Boolean
+        get() = global.getBoolean("expandCards", true)
+        set(v) = global.edit().putBoolean("expandCards", v).apply()
 
     /** Background trailers on the home billboard: 0 off, 1 muted, 2 with sound. */
     var trailerMode: Int
@@ -116,15 +197,16 @@ object Store {
         get() = string("embyUserName")
         set(v) = setString("embyUserName", v)
     val deviceId: String
-        get() = string("deviceId") ?: java.util.UUID.randomUUID().toString().also { setString("deviceId", it) }
+        get() = globalString("deviceId") ?: java.util.UUID.randomUUID().toString().also { setGlobalString("deviceId", it) }
 
     // ---- Trakt / TMDB ----
+    // The Trakt API app keys are shared; each profile approves its own Trakt account.
     var traktClientId: String?
-        get() = string("traktClientId")
-        set(v) = setString("traktClientId", v)
+        get() = globalString("traktClientId")
+        set(v) = setGlobalString("traktClientId", v)
     var traktSecret: String?
-        get() = string("traktSecret")
-        set(v) = setString("traktSecret", v)
+        get() = globalString("traktSecret")
+        set(v) = setGlobalString("traktSecret", v)
     var traktAccess: String?
         get() = string("traktAccess")
         set(v) = setString("traktAccess", v)
@@ -135,8 +217,8 @@ object Store {
         get() = prefs.getLong("traktExpires", 0)
         set(v) = prefs.edit().putLong("traktExpires", v).apply()
     var tmdbKey: String?
-        get() = string("tmdbKey")
-        set(v) = setString("tmdbKey", v)
+        get() = globalString("tmdbKey")
+        set(v) = setGlobalString("tmdbKey", v)
 
     fun traktSignOut() {
         prefs.edit().remove("traktAccess").remove("traktRefresh").remove("traktExpires").apply()

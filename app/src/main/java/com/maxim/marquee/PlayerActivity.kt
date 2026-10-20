@@ -12,6 +12,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.annotation.OptIn
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.material3.darkColorScheme
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.C
@@ -132,6 +133,10 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
     private var userInteracted = false
 
     private var segments: Repo.Segments? = null
+    private var thumbs: com.maxim.marquee.data.SeekThumbnails? = null
+    private var thumbJob: Job? = null
+    /** HTTP status of the failure that ended playback (401/403 = the service refused). */
+    private var httpCode = 0
     private var autoSkipped = HashSet<Long>()
     private var nextDismissed = false
     private var countdownAt = 0L
@@ -279,6 +284,9 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
                     }
                 }
                 // Unrecoverable: let the app switch to the next source (it resumes at the same spot).
+                var cause: Throwable? = error
+                while (cause != null && cause !is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) cause = cause.cause
+                httpCode = (cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode ?: 0
                 outcome = "error"
                 finish()
             }
@@ -296,6 +304,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         }
 
         if (type == "series") lifecycleScope.launch { segments = Repo.segments(videoId) }
+        embyId?.let { id -> lifecycleScope.launch { thumbs = com.maxim.marquee.data.Emby.seekThumbnails(id) } }
 
         lifecycleScope.launch { ticker() }
         lifecycleScope.launch {
@@ -519,6 +528,18 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         player.seekTo(target)
         ui.position = target
         if (!ui.controls) flash((if (ms < 0) "◀◀  " else "▶▶  ") + formatTime(target))
+        showThumb(target)
+    }
+
+    /** Preview picture of where you're seeking to, while you're seeking. */
+    private fun showThumb(pos: Long) {
+        val t = thumbs ?: return
+        thumbJob?.cancel()
+        thumbJob = lifecycleScope.launch {
+            t.frame(pos)?.let { ui.thumb = it.asImageBitmap() }
+            delay(1_400)
+            ui.thumb = null
+        }
     }
 
     override fun skip() {
@@ -723,7 +744,8 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             if (started) saveProgress(sync = true, stopped = true)
             setResult(
                 RESULT_OK,
-                Intent().putExtra("outcome", outcome).putExtra("videoId", outcomeVideo).putExtra("auto", outcomeAuto),
+                Intent().putExtra("outcome", outcome).putExtra("videoId", outcomeVideo).putExtra("auto", outcomeAuto)
+                    .putExtra("httpCode", httpCode),
             )
         }
         super.finish()

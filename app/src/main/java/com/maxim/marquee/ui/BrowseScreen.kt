@@ -72,6 +72,7 @@ fun MainShell(model: AppModel, railRequesters: Map<Tab, FocusRequester>) {
             Tab.SEARCH -> SearchScreen(model)
             Tab.MYLIST -> MyListScreen(model)
             Tab.SETTINGS -> SettingsScreen(model)
+            Tab.PROFILE -> Unit
         }
         Rail(model, railRequesters)
     }
@@ -126,11 +127,15 @@ fun Rail(model: AppModel, requesters: Map<Tab, FocusRequester>) {
                             selected -> Color.White
                             else -> C.Dim
                         }
-                        Icon(t.icon, t.label, tint = tint, modifier = Modifier.size(22.dp))
+                        if (t == Tab.PROFILE) {
+                            Avatar(com.maxim.marquee.data.Store.activeProfile, 24.dp)
+                        } else {
+                            Icon(t.icon, t.label, tint = tint, modifier = Modifier.size(22.dp))
+                        }
                         if (expanded) {
                             Spacer(Modifier.width(18.dp))
                             Text(
-                                t.label,
+                                if (t == Tab.PROFILE) com.maxim.marquee.data.Store.activeProfile.name else t.label,
                                 color = tint,
                                 fontSize = 17.sp,
                                 fontWeight = if (selected || f) FontWeight.Bold else FontWeight.Normal,
@@ -198,34 +203,34 @@ fun BrowseScreen(model: AppModel, b: BrowseState) {
             Box(Modifier.fillMaxWidth().height(heroH)) {
                 if (hero != null) {
                     val m = b.heroMeta ?: hero.meta
+                    val extras = rememberExtras(m)
                     Column(
-                        Modifier.align(Alignment.BottomStart).padding(start = 14.dp, bottom = 14.dp).width(560.dp),
+                        Modifier.align(Alignment.BottomStart).padding(start = 14.dp, bottom = 14.dp).width(620.dp),
                     ) {
-                        TitleArt(m, big = true)
-                        Spacer(Modifier.height(10.dp))
-                        val line = infoLine(m)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            hero.badge?.let {
-                                Text(it, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                                Spacer(Modifier.width(12.dp))
-                            }
-                            if (line.isNotEmpty()) Text(line, color = C.Dim, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
+                        TitleArt(m, big = true, extraLogo = extras?.logo)
+                        Spacer(Modifier.height(12.dp))
+                        InfoRow(m, extras?.certification, leading = hero.badge ?: model.ribbonFor(m))
                         m.description?.let {
                             Spacer(Modifier.height(8.dp))
                             Text(it, color = Color(0xFFE6E6E6), fontSize = 15.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, lineHeight = 21.sp)
                         }
                     }
+                } else if (model.addonError == null) {
+                    SkeletonHero(Modifier.align(Alignment.BottomStart).padding(start = 14.dp, bottom = 14.dp))
                 }
             }
 
-            val hasCatalogs = b.rows.any { it.source !is RowSource.Continue }
-            if (!hasCatalogs && b.rowItems["continue"].isNullOrEmpty()) {
+            val hasCatalogs = b.rows.any { it.source !is RowSource.Continue && it.source !is RowSource.NewEpisodes }
+            val err = model.addonError
+            if (err != null && !hasCatalogs) {
+                Box(Modifier.fillMaxWidth().weight(1f)) { AddonErrorPanel(model, err) }
+            } else if (!hasCatalogs && b.rowItems["continue"].isNullOrEmpty()) {
                 Box(Modifier.fillMaxWidth().weight(1f)) {
-                    Centered(
-                        if (model.syncing) "Loading your addons…" else "Nothing to show yet",
-                        if (model.syncing) null else "Install catalog addons in Stremio and they'll appear here.",
-                    )
+                    if (model.syncing) {
+                        Column { repeat(2) { SkeletonRow(withTitle = true) } }
+                    } else {
+                        Centered("Nothing to show yet", "Install catalog addons in Stremio and they'll appear here.")
+                    }
                 }
             } else {
                 CompositionLocalProvider(LocalBringIntoViewSpec provides colSpec) {
@@ -278,6 +283,7 @@ fun CatalogRow(
         items?.mapNotNull { CardShape.of(it.meta.posterShape) }?.groupingBy { it }?.eachCount()?.maxByOrNull { it.value }?.key
     }
     val rowShape = declared ?: detected ?: CardShape.POSTER
+    val expandCards = Store.expandCards
 
     Column(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
         Text(
@@ -288,11 +294,7 @@ fun CatalogRow(
             modifier = Modifier.padding(start = 14.dp, top = 6.dp),
         )
         if (items.isNullOrEmpty()) {
-            Row(Modifier.padding(14.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                repeat(7) {
-                    Box(Modifier.width(CARD_W).height(CARD_W * 1.5f).background(C.Surface, RoundedCornerShape(6.dp)))
-                }
-            }
+            SkeletonRow(rowShape)
         } else {
             CompositionLocalProvider(LocalBringIntoViewSpec provides rowSpec) {
                 LazyRow(
@@ -314,9 +316,31 @@ fun CatalogRow(
                                 b.pendingFocusKey = null
                             }
                         }
+                        val onCardClick = {
+                            when {
+                                onClick != null -> onClick(item)
+                                item.videoId != null -> model.resume(item)
+                                else -> model.openDetail(item.meta)
+                            }
+                        }
+                        if (row.source is RowSource.Top10) {
+                            Top10Card(
+                                rank = i + 1,
+                                item = item,
+                                focusRequester = fr,
+                                onFocus = { model.onCardFocus(b, key, item) },
+                                onLongClick = { model.openCardMenu(b, item, false) },
+                                onClick = onCardClick,
+                            )
+                            return@itemsIndexed
+                        }
+                        val plainRow = row.source !is RowSource.Continue && row.source !is RowSource.NewEpisodes
                         PosterCard(
                             item = item,
                             width = CARD_W,
+                            ribbon = if (plainRow) model.ribbonFor(item.meta) else null,
+                            topRank = model.top10[item.meta.id],
+                            expandable = expandCards,
                             shape = rowShape,
                             onImageAspect = if (declared == null && detected == null && i < 3) {
                                 { a -> detected = CardShape.forAspect(a) }
@@ -327,13 +351,7 @@ fun CatalogRow(
                                 if (i >= items.size - 6) model.loadMore(b, row)
                             },
                             onLongClick = { model.openCardMenu(b, item, row.source is RowSource.Continue) },
-                            onClick = {
-                                when {
-                                    onClick != null -> onClick(item)
-                                    item.videoId != null -> model.resume(item)
-                                    else -> model.openDetail(item.meta)
-                                }
-                            },
+                            onClick = onCardClick,
                         )
                     }
                 }

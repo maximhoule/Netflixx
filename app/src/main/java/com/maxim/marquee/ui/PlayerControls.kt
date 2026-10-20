@@ -2,6 +2,11 @@ package com.maxim.marquee.ui
 
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -92,6 +97,20 @@ class PlayerUiState {
     var settingsTick by mutableIntStateOf(0)
     var seekFlash by mutableStateOf<String?>(null)
     var live by mutableStateOf(false)
+    /** Preview picture for where you're seeking to (Emby / Jellyfin only). */
+    var thumb by mutableStateOf<ImageBitmap?>(null)
+}
+
+private val THUMB_H = 126.dp
+private val TIME_W = 76.dp
+
+@Composable
+private fun SeekThumb(img: ImageBitmap, height: Dp, modifier: Modifier = Modifier) {
+    val w = height * img.width.toFloat() / img.height.coerceAtLeast(1).toFloat()
+    Image(
+        img, null, contentScale = ContentScale.Crop,
+        modifier = modifier.size(w, height).clip(RoundedCornerShape(6.dp)).border(2.dp, Color.White, RoundedCornerShape(6.dp)),
+    )
 }
 
 interface PlayerHost {
@@ -195,13 +214,19 @@ fun PlayerScreen(host: PlayerHost, ui: PlayerUiState, playerView: PlayerView) {
             CircularProgressIndicator(color = C.Red, strokeWidth = 4.dp, modifier = Modifier.align(Alignment.Center).size(56.dp))
         }
 
-        ui.seekFlash?.let {
-            if (!ui.controls) {
-                Text(
-                    it, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.align(Alignment.Center).background(Color(0x99000000), RoundedCornerShape(10.dp))
-                        .padding(horizontal = 22.dp, vertical = 12.dp),
-                )
+        if (!ui.controls && (ui.seekFlash != null || ui.thumb != null)) {
+            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                ui.thumb?.let {
+                    SeekThumb(it, 170.dp)
+                    Spacer(Modifier.height(12.dp))
+                }
+                ui.seekFlash?.let {
+                    Text(
+                        it, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.background(Color(0x99000000), RoundedCornerShape(10.dp))
+                            .padding(horizontal = 22.dp, vertical = 12.dp),
+                    )
+                }
             }
         }
 
@@ -286,18 +311,34 @@ private fun Controls(host: PlayerHost, ui: PlayerUiState) {
                 .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xEB000000)))),
         )
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 48.dp, end = 48.dp, bottom = 30.dp)) {
+            ui.thumb?.let { img ->
+                // Above the seek bar, lined up with where you're seeking to.
+                BoxWithConstraints(Modifier.fillMaxWidth().height(THUMB_H + 14.dp)) {
+                    val barStart = TIME_W + 16.dp
+                    val barW = maxWidth - barStart * 2
+                    val frac = (ui.position.toFloat() / ui.duration.coerceAtLeast(1)).coerceIn(0f, 1f)
+                    val tw = THUMB_H * img.width.toFloat() / img.height.coerceAtLeast(1).toFloat()
+                    val x = (barStart + barW * frac - tw / 2).coerceIn(0.dp, (maxWidth - tw).coerceAtLeast(0.dp))
+                    SeekThumb(img, THUMB_H, Modifier.offset(x = x))
+                }
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(formatTime(ui.position), color = Color.White, fontSize = 15.sp)
+                Text(formatTime(ui.position), color = Color.White, fontSize = 15.sp, modifier = Modifier.width(TIME_W))
                 Spacer(Modifier.width(16.dp))
                 SeekBar(host, ui, Modifier.weight(1f))
                 Spacer(Modifier.width(16.dp))
                 if (ui.live) {
-                    Text(
-                        "LIVE", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                        modifier = Modifier.background(C.Red, RoundedCornerShape(3.dp)).padding(horizontal = 8.dp, vertical = 3.dp),
-                    )
+                    Box(Modifier.width(TIME_W), contentAlignment = Alignment.CenterEnd) {
+                        Text(
+                            "LIVE", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                            modifier = Modifier.background(C.Red, RoundedCornerShape(3.dp)).padding(horizontal = 8.dp, vertical = 3.dp),
+                        )
+                    }
                 } else {
-                    Text("-" + formatTime(ui.duration - ui.position), color = Color.White, fontSize = 15.sp)
+                    Text(
+                        "-" + formatTime(ui.duration - ui.position), color = Color.White, fontSize = 15.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.End, modifier = Modifier.width(TIME_W),
+                    )
                 }
             }
             Spacer(Modifier.height(20.dp))

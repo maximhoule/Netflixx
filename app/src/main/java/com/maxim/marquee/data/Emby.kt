@@ -164,6 +164,8 @@ object Emby {
             trailer = o.arr("RemoteTrailers").objects().firstNotNullOfOrNull { youtubeId(it.str("Url")) },
             posterShape = if (primaryAspect > 1.2) "landscape" else null,
             defaultVideoId = if (appType(o) == "movie") PREFIX + id else null,
+            certification = o.str("OfficialRating"),
+            added = parseIso(o.str("DateCreated")),
         )
     }
 
@@ -241,7 +243,7 @@ object Emby {
         else -> null
     }
 
-    private const val FIELDS = "Overview,Genres,PrimaryImageAspectRatio,ProviderIds,People,RemoteTrailers,CommunityRating,ProductionYear,RunTimeTicks,MediaSources"
+    private const val FIELDS = "Overview,Genres,PrimaryImageAspectRatio,ProviderIds,People,RemoteTrailers,CommunityRating,ProductionYear,RunTimeTicks,MediaSources,OfficialRating,DateCreated"
 
     // ---------------------------------------------------------------- rows
 
@@ -401,6 +403,61 @@ object Emby {
         }
         val epId = eps[key] ?: return emptyList()
         return streams(PREFIX + epId)
+    }
+
+    /** Forget everything about the previous profile's server. */
+    fun reset() {
+        synchronized(imdbToEmby) { imdbToEmby.clear(); embyToImdb.clear() }
+        indexedAt = 0
+        userData.clear(); introKeys.clear(); episodeIndex.clear(); started.clear()
+    }
+
+    // ---------------------------------------------------------------- seek thumbnails
+
+    private suspend fun bytes(path: String): ByteArray? = withContext(Dispatchers.IO) {
+        safe {
+            val req = Request.Builder().url(server.trimEnd('/') + path)
+                .header("X-Emby-Authorization", authHeader())
+                .header("X-Emby-Token", token)
+                .build()
+            Http.client.newCall(req).execute().use { r -> if (r.isSuccessful) r.body?.bytes() else null }
+        }
+    }
+
+    /**
+     * Preview pictures for the seek bar, if the server has made them: Jellyfin "trickplay"
+     * tiles, or Emby's thumbnail (BIF) files. Null when the library has none.
+     */
+    suspend fun seekThumbnails(videoId: String): SeekThumbnails? {
+        if (!connected) return null
+        val raw = rawId(videoId)
+        // Jellyfin 10.9+: per media source, per width: tile grid info.
+        val item = getObj("/Users/$userId/Items/$raw?Fields=Trickplay,MediaSources")
+        val tp = item?.obj("Trickplay")
+        if (tp != null) {
+            val sourceId: String? = tp.keys().asSequence().firstOrNull()
+            val byWidth: JSONObject? = sourceId?.let { tp.obj(it) }
+            val width: Int? = byWidth?.keys()?.asSequence()?.mapNotNull { it.toIntOrNull() }?.minByOrNull { kotlin.math.abs(it - 320) }
+            val info: JSONObject? = if (width != null) byWidth?.obj(width.toString()) else null
+            if (info != null && sourceId != null && width != null) {
+                val w = info.int("Width") ?: width
+                val h = info.int("Height") ?: (w * 9 / 16)
+                return SeekThumbnails.Tiles(
+                    interval = info.long("Interval") ?: 10_000,
+                    count = info.int("ThumbnailCount") ?: 0,
+                    cols = info.int("TileWidth") ?: 10,
+                    rows = info.int("TileHeight") ?: 10,
+                    width = w, height = h,
+                    tileUrl = { index -> "$server/Videos/$raw/Trickplay/$width/$index.jpg?MediaSourceId=$sourceId&api_key=$token" },
+                )
+            }
+        }
+        // Emby: one BIF file with every thumbnail.
+        val sid = item?.arr("MediaSources").objects().firstOrNull()?.str("Id")
+        val bif = (if (sid != null) bytes("/Videos/$raw/index.bif?width=320&MediaSourceId=$sid") else null)
+            ?: bytes("/Videos/$raw/index.bif?width=320")
+            ?: return null
+        return withContext(Dispatchers.Default) { SeekThumbnails.Bif.parse(bif) }
     }
 
     private val started = HashSet<String>()

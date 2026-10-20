@@ -136,8 +136,18 @@ data class MetaItem(
     val trailer: String? = null,
     /** "poster" (2:3), "landscape" (16:9) or "square", as declared by the addon. */
     val posterShape: String? = null,
+    /** Age rating ("TV-MA", "PG-13", "14A"…) when known. */
+    val certification: String? = null,
+    /** When it was added to your Emby server (epoch ms), 0 if unknown. */
+    val added: Long = 0,
 ) {
     val isSeries get() = type != "movie" && videos.isNotEmpty()
+
+    /** The title's logo artwork: the addon's, or the community artwork for IMDb titles. */
+    val logoUrl: String? get() = logo ?: if (id.startsWith("tt")) "https://images.metahub.space/logo/medium/${id.substringBefore(':')}/img" else null
+
+    /** Number of real seasons (specials excluded). */
+    val seasonCount: Int get() = videos.map { it.season }.filter { it > 0 }.distinct().size
 
     companion object {
         fun parse(o: JSONObject, fallbackType: String? = null): MetaItem? {
@@ -161,6 +171,7 @@ data class MetaItem(
                 trailer = o.arr("trailerStreams").objects().firstNotNullOfOrNull { it.str("ytId") }
                     ?: o.arr("trailers").objects().firstOrNull { (it.str("type") ?: "Trailer") == "Trailer" }?.str("source"),
                 posterShape = o.str("posterShape"),
+                certification = o.str("certification") ?: o.str("ageRating"),
             )
         }
     }
@@ -309,3 +320,12 @@ data class CardItem(
     val progress: Float? = null,
     val badge: String? = null,
 )
+
+/** Looks like an addon's error placeholder ("debrid expired", "invalid API key"…) rather than a real source. */
+private val ERROR_TEXT = Regex(
+    "(expired|subscription|not premium|premium (required|needed|account)|invalid (api )?(key|token)|unauthori[sz]ed|" +
+        "account (is )?(locked|banned|disabled|suspended)|payment required|no debrid|debrid (error|service unavailable)|❌|\\[error\\])",
+    RegexOption.IGNORE_CASE,
+)
+
+fun StreamItem.looksLikeError(): Boolean = ERROR_TEXT.containsMatchIn("$name $title")

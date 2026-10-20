@@ -90,9 +90,9 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
                 .verticalScroll(rememberScrollState())
                 .padding(start = 56.dp, top = 56.dp, bottom = 40.dp),
         ) {
-            TitleArt(meta, big = true)
-            Spacer(Modifier.height(12.dp))
-            val line = infoLine(meta)
+            val extras = rememberExtras(meta)
+            TitleArt(meta, big = true, extraLogo = extras?.logo)
+            Spacer(Modifier.height(14.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val onEmby = com.maxim.marquee.data.Emby.isEmby(meta.id) || com.maxim.marquee.data.Emby.hasTitle(meta.id)
                 if (onEmby) {
@@ -102,7 +102,7 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
                     )
                     Spacer(Modifier.width(12.dp))
                 }
-                if (line.isNotEmpty()) Text(line, color = C.Dim, fontSize = 15.sp)
+                InfoRow(meta, extras?.certification, leading = model.ribbonFor(meta))
             }
             meta.description?.let {
                 Spacer(Modifier.height(10.dp))
@@ -208,7 +208,7 @@ private fun DetailRow(title: String, cards: List<com.maxim.marquee.data.CardItem
     Text(title, color = Color(0xFFE5E5E5), fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
     LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(vertical = 12.dp, horizontal = 4.dp)) {
         items(cards, key = { it.meta.id }) { item ->
-            PosterCard(item = item, width = CARD_W, onClick = { model.openDetail(item.meta) })
+            PosterCard(item = item, width = CARD_W, topRank = model.top10[item.meta.id], onClick = { model.openDetail(item.meta) })
         }
     }
 }

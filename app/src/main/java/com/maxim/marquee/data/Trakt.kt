@@ -160,6 +160,15 @@ object Trakt {
         return (0 until maxOf(m.size, s.size)).flatMap { i -> listOfNotNull(m.getOrNull(i), s.getOrNull(i)) }
     }
 
+    /** What most people are watching right now. Needs only the Client ID (no sign-in). */
+    suspend fun trending(type: String, limit: Int = 10): List<MetaItem> {
+        if (Store.traktClientId.isNullOrBlank()) return emptyList()
+        val kind = if (type == "series") "shows" else "movies"
+        val (code, text) = call("/$kind/trending?limit=$limit") ?: return emptyList()
+        if (code != 200) return emptyList()
+        return withContext(Dispatchers.Default) { parseList(text, if (type == "series") "show" else "movie", type) }
+    }
+
     /** "More like this". Needs only the Client ID (no sign-in). */
     suspend fun related(type: String, imdbId: String): List<MetaItem> {
         if (Store.traktClientId.isNullOrBlank() || !imdbId.startsWith("tt")) return emptyList()

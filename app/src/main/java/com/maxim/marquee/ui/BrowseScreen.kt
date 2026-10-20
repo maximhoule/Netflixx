@@ -183,10 +183,15 @@ fun BrowseScreen(model: AppModel, b: BrowseState) {
             tp.play(ytId, muted = Store.trailerMode == 1)
         }
         DisposableEffect(Unit) { onDispose { model.stopTrailer() } }
+        val trailerLayer: (@Composable () -> Unit)? = if (trailersOn) {
+            { TrailerLayer(model) }
+        } else {
+            null
+        }
         Backdrop(
             bg,
             Modifier.align(Alignment.TopEnd).fillMaxWidth(0.74f).height(maxHeight * 0.72f),
-            video = if (trailersOn) @Composable { TrailerLayer(model) } else null,
+            video = trailerLayer,
         )
 
         Column(Modifier.fillMaxSize().padding(start = RAIL + 12.dp)) {

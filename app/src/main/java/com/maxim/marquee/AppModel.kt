@@ -123,6 +123,19 @@ class BrowseState(val type: String?, val withContinue: Boolean) {
 
     fun firstKey(): String? = rows.firstOrNull { !rowItems[it.key].isNullOrEmpty() }?.let { "${it.key}#0" }
 
+    /**
+     * The top row that has titles, but only once every row above it has finished loading
+     * (rows load in parallel; a lower row answering first mustn't grab the starting focus).
+     */
+    fun firstReadyRow(): RowModel? {
+        for (r in rows) {
+            val items = rowItems[r.key]
+            if (!items.isNullOrEmpty()) return r
+            if (loaded[r.key] != true) return null
+        }
+        return null
+    }
+
     fun reset(defs: List<RowModel>) {
         rows.clear(); rows.addAll(defs)
         rowItems.clear(); loaded.clear(); rowStates.clear(); skips.clear(); loadingMore.clear(); requested.clear()
@@ -608,12 +621,10 @@ class AppModel(private val activity: MainActivity) {
     }
 
     private fun afterRowLoaded(b: BrowseState) {
-        if (b.lastFocusKey == null && b.pendingFocusKey == null) b.pendingFocusKey = b.firstKey()
-        if (b.hero == null) {
-            b.rows.firstOrNull { !b.rowItems[it.key].isNullOrEmpty() }?.let { r ->
-                b.rowItems[r.key]?.firstOrNull()?.let { setHero(b, it) }
-            }
-        }
+        val first = b.firstReadyRow() ?: return
+        // Nothing focused yet: start on the first title of the top row (retried until it lands).
+        if (b.lastFocusKey == null) b.pendingFocusKey = "${first.key}#0"
+        if (b.hero == null) b.rowItems[first.key]?.firstOrNull()?.let { setHero(b, it) }
     }
 
     private var heroDebounce: Job? = null

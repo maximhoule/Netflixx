@@ -61,23 +61,31 @@ object Http {
 
     private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
 
-    /** GET a JSON object; null on any failure. */
-    suspend fun getJson(url: String, fetch: Fetch = Fetch.NORMAL): JSONObject? = withContext(Dispatchers.IO) {
-        safe {
-            client.newCall(request(url, fetch)).execute().use { r ->
-                val text = r.body?.string()
-                if (!r.isSuccessful || text.isNullOrBlank()) null else JSONObject(text)
-            }
-        }
+    /** Logged when a request fails, so problems show up in the device log. */
+    private fun warn(url: String, why: String) {
+        android.util.Log.w("Marquee", "GET failed ($why): ${url.substringBefore('?').take(160)}")
     }
+
+    /** GET a JSON object; null on any failure. */
+    suspend fun getJson(url: String, fetch: Fetch = Fetch.NORMAL): JSONObject? = getMapped(url, fetch) { it }
 
     /** GET + transform, both off the main thread. */
     suspend fun <T> getMapped(url: String, fetch: Fetch = Fetch.NORMAL, map: (JSONObject) -> T): T? = withContext(Dispatchers.IO) {
-        safe {
+        try {
             client.newCall(request(url, fetch)).execute().use { r ->
                 val text = r.body?.string()
-                if (!r.isSuccessful || text.isNullOrBlank()) null else map(JSONObject(text))
+                when {
+                    // 504 here just means "not saved yet" for cache-only lookups.
+                    !r.isSuccessful -> { if (fetch != Fetch.CACHED_ONLY) warn(url, "HTTP ${r.code}"); null }
+                    text.isNullOrBlank() -> { warn(url, "empty"); null }
+                    else -> map(JSONObject(text))
+                }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            warn(url, e.javaClass.simpleName + ": " + e.message)
+            null
         }
     }
 

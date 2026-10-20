@@ -266,6 +266,7 @@ object Repo {
                 }
             }.awaitAll().flatten()
         val all = stremio + (emby?.await() ?: emptyList())
+        android.util.Log.i("Marquee", "search '$query': ${addons.size} addons, ${stremio.size} from catalogs, ${all.size} total")
         // One row per type ("Movies", "Series", …), each title once.
         val order = listOf("movie", "series")
         all.groupBy { it.type }

@@ -72,7 +72,7 @@ summary "== search"
 fast DPAD_LEFT 8; sleep 1; shot rail_open
 key DPAD_UP DPAD_CENTER; sleep 3; shot search
 key DPAD_RIGHT DPAD_CENTER DPAD_LEFT DPAD_CENTER DPAD_DOWN DPAD_DOWN DPAD_DOWN DPAD_RIGHT DPAD_CENTER
-sleep 8; shot search_results_bat
+sleep 15; shot search_results_bat
 
 summary "== settings"
 fast DPAD_LEFT 4; sleep 1
@@ -95,11 +95,12 @@ key BACK; sleep 1; key BACK; sleep 2; shot profiles_closed
 summary "== player (public test stream)"
 adb shell am start -n $PKG/.PlayerActivity \
   --es url "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --es type movie \
-  --es metaId tt1254207 --es videoId tt1254207 --es name "Big Buck Bunny" --es streamName "Test stream" >/dev/null
+  --es metaId tt1254207 --es videoId tt1254207 --es name "Big\ Buck\ Bunny" --es streamName "Test\ stream" >/dev/null
 sleep 20; shot player_playing
 key DPAD_RIGHT; sleep 1; shot player_seek_flash
 key DPAD_UP; sleep 2; shot player_controls
-key DPAD_RIGHT DPAD_RIGHT DPAD_RIGHT DPAD_CENTER; sleep 2; shot player_panel
+# Controls hide after 5 s without a key press; bring them back right before navigating them.
+key DPAD_UP; key DPAD_RIGHT DPAD_RIGHT DPAD_RIGHT DPAD_CENTER; sleep 2; shot player_panel
 key BACK; sleep 1; key BACK; sleep 1; key BACK; sleep 3; shot after_player
 
 summary "== results"
@@ -112,5 +113,7 @@ else
 fi
 grep -E "ANR in $PKG" "$OUT/logcat.txt" | tee -a "$OUT/summary.txt" || true
 grep -E "^.{0,40}[EW] .*($PKG|AndroidRuntime|ExoPlayer|MediaCodec)" "$OUT/logcat.txt" | grep -v "chatty" | head -120 > "$OUT/errors_warnings.txt" || true
+grep -E " Marquee *:" "$OUT/logcat.txt" > "$OUT/marquee_log.txt" || true
+summary "App log lines: $(wc -l < "$OUT/marquee_log.txt")"; grep -E "search '|GET failed" "$OUT/marquee_log.txt" | head -40 | tee -a "$OUT/summary.txt"
 grep -E "Janky frames|Total frames|50th|90th|99th" "$OUT/gfxinfo_browse.txt" | head -8 | tee -a "$OUT/summary.txt"
 exit 0

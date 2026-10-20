@@ -129,9 +129,11 @@ object Repo {
             a.catalogs.filter { it.browsable && (type == null || it.type == type) }.map { a to it }
         }
 
-    suspend fun catalog(a: Addon, c: Catalog, skip: Int = 0): List<MetaItem> {
+    /** A catalog page. [cachedOnly] returns the copy saved last time (instantly, no network) or nothing. */
+    suspend fun catalog(a: Addon, c: Catalog, skip: Int = 0, cachedOnly: Boolean = false): List<MetaItem> {
         val extra = if (skip > 0) "/skip=$skip" else ""
-        val o = Http.getJson("${a.base}/catalog/${c.type}/${enc(c.id)}$extra.json") ?: return emptyList()
+        val o = Http.getJson("${a.base}/catalog/${c.type}/${enc(c.id)}$extra.json", if (cachedOnly) Fetch.CACHED_ONLY else Fetch.NORMAL)
+            ?: return emptyList()
         return withContext(Dispatchers.Default) { o.arr("metas").objects().mapNotNull { MetaItem.parse(it, c.type) } }
     }
 
@@ -151,13 +153,17 @@ object Repo {
 
     fun cachedMeta(type: String, id: String): MetaItem? = metaCache.get("$type/$id")
 
-    suspend fun meta(type: String, id: String): MetaItem? {
-        cachedMeta(type, id)?.let { return it }
+    /**
+     * Full details for a title. Uses a stored copy up to 12 hours old for speed; [fresh] always asks
+     * the addon (used when checking for new episodes).
+     */
+    suspend fun meta(type: String, id: String, fresh: Boolean = false): MetaItem? {
+        if (!fresh) cachedMeta(type, id)?.let { return it }
         if (Emby.isEmby(id)) {
             return Emby.meta(id)?.also { metaCache.put("$type/$id", it) }
         }
         for (a in addons.filter { it.supports("meta", type, id) }) {
-            val o = Http.getJson("${a.base}/meta/$type/${enc(id)}.json")?.obj("meta") ?: continue
+            val o = Http.getJson("${a.base}/meta/$type/${enc(id)}.json", if (fresh) Fetch.NORMAL else Fetch.STALE_OK)?.obj("meta") ?: continue
             val m = withContext(Dispatchers.Default) { MetaItem.parse(o, type) } ?: continue
             metaCache.put("$type/$id", m)
             return m
@@ -169,7 +175,7 @@ object Repo {
 
     private suspend fun fetchStreams(a: Addon, type: String, videoId: String): List<StreamItem> =
         withTimeoutOrNull(25_000) {
-            Http.getMapped("${a.base}/stream/$type/${enc(videoId)}.json") { o ->
+            Http.getMapped("${a.base}/stream/$type/${enc(videoId)}.json", Fetch.NETWORK_ONLY) { o ->
                 o.arr("streams").objects().mapNotNull { StreamItem.parse(it, a.name) }
             }
         } ?: emptyList()
@@ -269,13 +275,26 @@ object Repo {
             .filter { it.second.isNotEmpty() }
     }
 
-    suspend fun library(): List<LibEntry> {
+    /** Your Stremio library; null if it couldn't be loaded (keep what you have). Saved for instant start next time. */
+    suspend fun library(): List<LibEntry>? {
         val key = Store.authKey ?: return emptyList()
         return safe {
             val raw = StremioApi.library(key)
-            withContext(Dispatchers.Default) { raw.mapNotNull { LibEntry.parse(it) } }
-        } ?: emptyList()
+            withContext(Dispatchers.Default) {
+                Store.saveLibraryCache(JSONArray().apply { raw.forEach { put(it) } }.toString())
+                raw.mapNotNull { LibEntry.parse(it) }
+            }
+        }
     }
+
+    /** The library as it was last time, from disk (no network). */
+    suspend fun cachedLibrary(): List<LibEntry> = withContext(Dispatchers.IO) {
+        val text = Store.loadLibraryCache() ?: return@withContext emptyList()
+        safe { JSONArray(text).objects().mapNotNull { LibEntry.parse(it) } } ?: emptyList()
+    }
+
+    /** Parses the saved addon list off the main thread. */
+    suspend fun loadCachedAddonsAsync() = withContext(Dispatchers.Default) { loadCachedAddons() }
 
     /**
      * Writes playback progress back to the Stremio library so Continue Watching matches

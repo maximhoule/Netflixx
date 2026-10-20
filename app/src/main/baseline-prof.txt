@@ -1,0 +1,5 @@
+# Marquee's own code: compiled ahead of time when the app is installed, so the first
+# scrolls and screens are as smooth as later ones (instead of waiting for the JIT to warm up).
+# Compose, Media3 and the other libraries ship their own profiles, which are merged in.
+Lcom/maxim/marquee/**;
+HSPLcom/maxim/marquee/**;->**(**)**

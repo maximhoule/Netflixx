@@ -17,3 +17,7 @@
 -keepclassmembers class * {
     @android.webkit.JavascriptInterface <methods>;
 }
+
+# Our own classes keep their names (still optimised and shrunk) so the baseline profile in
+# src/main/baseline-prof.txt matches them after R8.
+-keepnames class com.maxim.marquee.** { *; }

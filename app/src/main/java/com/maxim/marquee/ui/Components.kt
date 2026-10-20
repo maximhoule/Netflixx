@@ -73,6 +73,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.TextStyle
 import coil.compose.AsyncImage
+import coil.imageLoader
 import com.maxim.marquee.data.CardItem
 import com.maxim.marquee.data.MetaItem
 
@@ -413,8 +414,18 @@ fun ActionButton(
 /** Full-bleed artwork that fades into black on the left and bottom. */
 @Composable
 fun Backdrop(url: String?, modifier: Modifier = Modifier, video: (@Composable () -> Unit)? = null) {
+    // Keep showing the current picture until the next one is decoded, then crossfade:
+    // no flash of black between titles.
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var shown by remember { mutableStateOf(url) }
+    LaunchedEffect(url) {
+        if (url != null && url != shown) {
+            safeLoad { ctx.imageLoader.execute(backdropRequest(ctx, url)) }
+        }
+        shown = url
+    }
     Box(modifier) {
-        Crossfade(targetState = url, animationSpec = tween(220), label = "backdrop") { u ->
+        Crossfade(targetState = shown, animationSpec = tween(260), label = "backdrop") { u ->
             if (u != null) {
                 AsyncImage(
                     model = u,
@@ -436,6 +447,22 @@ fun Backdrop(url: String?, modifier: Modifier = Modifier, video: (@Composable ()
                 Brush.verticalGradient(0.45f to Color.Transparent, 1f to C.Bg),
             ),
         )
+    }
+}
+
+/** Backdrops are decoded once at a size that fits every place they appear (billboard and details). */
+fun backdropRequest(ctx: android.content.Context, url: String): coil.request.ImageRequest {
+    val d = ctx.resources.displayMetrics
+    return coil.request.ImageRequest.Builder(ctx).data(url).size((d.widthPixels * 0.8f).toInt(), d.heightPixels).build()
+}
+
+private suspend fun safeLoad(block: suspend () -> Unit) {
+    try {
+        block()
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        // show it anyway; AsyncImage will retry
     }
 }
 

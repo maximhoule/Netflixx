@@ -660,8 +660,8 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         val p = if (finished) dur else pos
         Store.saveProgress(LocalProgress(metaId, type, name, poster, videoId, p, dur, System.currentTimeMillis()))
         if (sync && Store.syncProgress) {
-            val t = type; val m = metaId; val v = videoId; val nx = next?.id
-            AppScope.launch { Repo.syncProgress(t, m, v, p, dur, finished, nx) }
+            val t = type; val m = metaId; val v = videoId; val nx = next?.id; val n = name; val ps = poster
+            AppScope.launch { Repo.syncProgress(t, m, v, p, dur, finished, nx, n, ps) }
         }
     }
 

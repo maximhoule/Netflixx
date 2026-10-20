@@ -468,6 +468,13 @@ fun SettingsScreen(model: AppModel) {
             val opts = listOf(0, 2160, 1080, 720)
             Store.maxQuality = opts[(opts.indexOf(Store.maxQuality).coerceAtLeast(0) + 1) % opts.size]; version++
         }
+        SettingRow(
+            "Trailers on the home screen",
+            when (Store.trailerMode) { 0 -> "Off"; 2 -> "With sound"; else -> "Muted" },
+            "Plays the trailer behind the billboard when you rest on a title",
+        ) {
+            Store.trailerMode = (Store.trailerMode + 1) % 3; version++
+        }
         SettingRow("Skip intros automatically", onOff(Store.autoSkipIntro), "Otherwise a Skip Intro button appears (IntroDB data)") {
             Store.autoSkipIntro = !Store.autoSkipIntro; version++
         }

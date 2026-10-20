@@ -1,6 +1,13 @@
 package com.maxim.marquee.ui
 
+import android.view.ViewGroup
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.viewinterop.AndroidView
+import com.maxim.marquee.data.Store
+import kotlinx.coroutines.delay
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -164,7 +171,23 @@ fun BrowseScreen(model: AppModel, b: BrowseState) {
         val heroH = maxHeight * 0.48f
         val hero = b.hero
         val bg = b.heroMeta?.background ?: hero?.meta?.background
-        Backdrop(bg, Modifier.align(Alignment.TopEnd).fillMaxWidth(0.74f).height(maxHeight * 0.72f))
+        // Trailer behind the billboard once you rest on a title for a couple of seconds.
+        val trailersOn = Store.trailerMode != 0
+        val ytId = b.heroMeta?.trailer
+        LaunchedEffect(ytId, hero?.meta?.id, trailersOn) {
+            if (!trailersOn) return@LaunchedEffect
+            val tp = model.trailer
+            tp.stop()
+            if (ytId == null) return@LaunchedEffect
+            delay(2_200)
+            tp.play(ytId, muted = Store.trailerMode == 1)
+        }
+        DisposableEffect(Unit) { onDispose { model.stopTrailer() } }
+        Backdrop(
+            bg,
+            Modifier.align(Alignment.TopEnd).fillMaxWidth(0.74f).height(maxHeight * 0.72f),
+            video = if (trailersOn) @Composable { TrailerLayer(model) } else null,
+        )
 
         Column(Modifier.fillMaxSize().padding(start = RAIL + 12.dp)) {
             Box(Modifier.fillMaxWidth().height(heroH)) {
@@ -214,6 +237,20 @@ fun BrowseScreen(model: AppModel, b: BrowseState) {
             }
         }
     }
+}
+
+@Composable
+private fun TrailerLayer(model: AppModel) {
+    val tp = model.trailer
+    val web = tp.view ?: return
+    val alpha by animateFloatAsState(if (tp.playing) 1f else 0f, tween(if (tp.playing) 800 else 200), label = "trailerAlpha")
+    AndroidView(
+        factory = {
+            (web.parent as? ViewGroup)?.removeView(web)
+            web
+        },
+        modifier = Modifier.fillMaxSize().alpha(alpha),
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)

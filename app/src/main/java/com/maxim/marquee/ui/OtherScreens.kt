@@ -400,7 +400,7 @@ fun MyListScreen(model: AppModel) {
                 contentPadding = PaddingValues(8.dp, 8.dp, 8.dp, 80.dp),
             ) {
                 itemsIndexed(items, key = { _, e -> e.id }) { i, e ->
-                    val meta = MetaItem(id = e.id, type = e.type, name = e.name, poster = e.poster)
+                    val meta = MetaItem(id = e.id, type = e.type, name = e.name, poster = e.poster, posterShape = e.posterShape)
                     val fr = if (i == 0) firstFr else remember { FocusRequester() }
                     LaunchedEffect(Unit) {
                         if (i == model.myListFocus) {

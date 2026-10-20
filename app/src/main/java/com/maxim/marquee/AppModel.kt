@@ -349,7 +349,7 @@ class AppModel(private val activity: MainActivity) {
 
     private data class Cand(
         val metaId: String, val type: String, val name: String, val poster: String?,
-        val videoId: String, val pos: Long, val dur: Long, val time: Long,
+        val videoId: String, val pos: Long, val dur: Long, val time: Long, val shape: String? = null,
     )
 
     /**
@@ -363,7 +363,7 @@ class AppModel(private val activity: MainActivity) {
             if (e.type != "other" && (!e.removed || e.temp) && e.timeOffset > 0) {
                 byId[e.id] = Cand(
                     e.id, e.type, e.name, e.poster, e.videoId ?: e.id, e.timeOffset, e.duration,
-                    maxOf(e.mtime, e.lastWatched),
+                    maxOf(e.mtime, e.lastWatched), e.posterShape,
                 )
             }
         }
@@ -378,7 +378,7 @@ class AppModel(private val activity: MainActivity) {
             if (finished || p.position <= 0) {
                 byId.remove(metaId)
             } else {
-                byId[metaId] = Cand(metaId, p.type, p.name, p.poster ?: lib?.poster, p.videoId, p.position, p.duration, p.updated)
+                byId[metaId] = Cand(metaId, p.type, p.name, p.poster ?: lib?.poster, p.videoId, p.position, p.duration, p.updated, lib?.posterShape)
             }
         }
         return byId.values
@@ -386,7 +386,7 @@ class AppModel(private val activity: MainActivity) {
             .take(50)
             .map { c ->
                 CardItem(
-                    meta = MetaItem(id = c.metaId, type = c.type, name = c.name, poster = c.poster),
+                    meta = MetaItem(id = c.metaId, type = c.type, name = c.name, poster = c.poster, posterShape = c.shape),
                     videoId = c.videoId,
                     progress = if (c.dur > 0 && c.pos > 1) (c.pos.toFloat() / c.dur).coerceIn(0.02f, 1f) else null,
                     badge = if (c.type == "series") {

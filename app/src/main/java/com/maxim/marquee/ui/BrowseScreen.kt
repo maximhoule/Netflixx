@@ -272,6 +272,13 @@ fun CatalogRow(
     val done = b.loaded[row.key] == true
     if (done && items.isNullOrEmpty()) return
 
+    // Use the shape the addon declares; if it doesn't, measure the first artwork that loads.
+    var detected by remember(row.key) { mutableStateOf<CardShape?>(null) }
+    val declared = remember(items) {
+        items?.mapNotNull { CardShape.of(it.meta.posterShape) }?.groupingBy { it }?.eachCount()?.maxByOrNull { it.value }?.key
+    }
+    val rowShape = declared ?: detected ?: CardShape.POSTER
+
     Column(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
         Text(
             row.title,
@@ -310,6 +317,10 @@ fun CatalogRow(
                         PosterCard(
                             item = item,
                             width = CARD_W,
+                            shape = rowShape,
+                            onImageAspect = if (declared == null && detected == null && i < 3) {
+                                { a -> detected = CardShape.forAspect(a) }
+                            } else null,
                             focusRequester = fr,
                             onFocus = {
                                 model.onCardFocus(b, key, item)

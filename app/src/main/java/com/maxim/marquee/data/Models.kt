@@ -131,6 +131,8 @@ data class MetaItem(
     val defaultVideoId: String? = null,
     /** YouTube id of a trailer, when the metadata addon provides one. */
     val trailer: String? = null,
+    /** "poster" (2:3), "landscape" (16:9) or "square", as declared by the addon. */
+    val posterShape: String? = null,
 ) {
     val isSeries get() = type != "movie" && videos.isNotEmpty()
 
@@ -155,6 +157,7 @@ data class MetaItem(
                 defaultVideoId = o.obj("behaviorHints")?.str("defaultVideoId"),
                 trailer = o.arr("trailerStreams").objects().firstNotNullOfOrNull { it.str("ytId") }
                     ?: o.arr("trailers").objects().firstOrNull { (it.str("type") ?: "Trailer") == "Trailer" }?.str("source"),
+                posterShape = o.str("posterShape"),
             )
         }
     }
@@ -263,6 +266,7 @@ data class LibEntry(
     val videoId: String?,
     val timeOffset: Long,
     val duration: Long,
+    val posterShape: String? = null,
 ) {
     val inMyList get() = !removed && !temp && (type == "movie" || type == "series")
 
@@ -282,6 +286,7 @@ data class LibEntry(
                 videoId = st?.str("video_id"),
                 timeOffset = st?.long("timeOffset") ?: 0,
                 duration = st?.long("duration") ?: 0,
+                posterShape = o.str("posterShape"),
             )
         }
     }

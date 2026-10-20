@@ -55,6 +55,7 @@ enum class Tab(val label: String, val icon: ImageVector) {
     HOME("Home", Icons.Filled.Home),
     SERIES("Series", TvIcon),
     MOVIES("Movies", MovieIcon),
+    SPORTS("Sports", com.maxim.marquee.ui.SportsIcon),
     MYLIST("My List", Icons.Filled.Add),
     SETTINGS("Settings", Icons.Filled.Settings),
 }
@@ -103,7 +104,7 @@ sealed class RowSource {
 data class RowModel(val key: String, val title: String, val source: RowSource)
 
 /** Everything a browse page needs to look the same when you come back to it. */
-class BrowseState(val type: String?, val withContinue: Boolean) {
+class BrowseState(val type: String?, val withContinue: Boolean, val sportsOnly: Boolean = false) {
     val columnState = LazyListState()
     val rowStates = HashMap<String, LazyListState>()
     val rows = mutableStateListOf<RowModel>()
@@ -207,7 +208,13 @@ class AppModel(private val activity: MainActivity) {
         Tab.HOME to BrowseState(null, true),
         Tab.SERIES to BrowseState("series", false),
         Tab.MOVIES to BrowseState("movie", false),
+        Tab.SPORTS to BrowseState(null, false, sportsOnly = true),
     )
+    /** The Sports tab only shows up when your addons have sports or live TV catalogs. */
+    var hasSports by mutableStateOf(false)
+
+    /** Side-menu entries, in order. */
+    val tabs: List<Tab> get() = Tab.entries.filter { it != Tab.SPORTS || hasSports }
     val search = BrowseState(null, false)
     var searchQuery by mutableStateOf("")
     var searchedQuery = ""
@@ -459,6 +466,22 @@ class AppModel(private val activity: MainActivity) {
                     defs += RowModel("trakt-recs", "Recommended for You", RowSource.Trakt("recs"))
                 }
             }
+            // Sports and live TV straight after Continue Watching on Home (and on their own tab).
+            val sportsRows = Repo.boardCatalogs(null)
+                .filter { (a, c) -> Repo.isSports(a, c) }
+                .groupBy { (_, c) -> rowTitle(c).lowercase() }
+                .values
+                .mapIndexed { i, group ->
+                    val (a, c) = group.first()
+                    RowModel("sports|${a.transportUrl.hashCode()}|${c.type}|${c.id}|$i", rowTitle(c), RowSource.Cat(a, c, group.drop(1)))
+                }
+            hasSports = sportsRows.isNotEmpty()
+            if (b.sportsOnly) {
+                b.reset(sportsRows)
+                b.signature = sig
+                return@forEach
+            }
+            if (b.withContinue) defs += sportsRows
             if (com.maxim.marquee.data.Emby.connected) {
                 embyLibraries.filter { lib ->
                     when (b.type) {
@@ -472,6 +495,8 @@ class AppModel(private val activity: MainActivity) {
             }
             // Rows with the same name from different addons (e.g. two "Popular Movies") become one row.
             val catalogRows = Repo.boardCatalogs(b.type)
+                // Already near the top of Home.
+                .filterNot { (a, c) -> b.withContinue && Repo.isSports(a, c) }
                 .groupBy { (_, c) -> rowTitle(c).lowercase() }
                 .values
                 .mapIndexed { i, group ->

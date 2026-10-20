@@ -69,7 +69,7 @@ val CARD_W = 118.dp
 fun MainShell(model: AppModel, railRequesters: Map<Tab, FocusRequester>) {
     Box(Modifier.fillMaxSize().background(C.Bg)) {
         when (model.tab) {
-            Tab.HOME, Tab.SERIES, Tab.MOVIES -> BrowseScreen(model, model.browse.getValue(model.tab))
+            Tab.HOME, Tab.SERIES, Tab.MOVIES, Tab.SPORTS -> BrowseScreen(model, model.browse.getValue(model.tab))
             Tab.SEARCH -> SearchScreen(model)
             Tab.MYLIST -> MyListScreen(model)
             Tab.SETTINGS -> SettingsScreen(model)
@@ -109,7 +109,7 @@ fun Rail(model: AppModel, requesters: Map<Tab, FocusRequester>) {
                 .padding(horizontal = 10.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically),
         ) {
-            Tab.entries.forEach { t ->
+            model.tabs.forEach { t ->
                 val selected = t == model.tab
                 Tile(
                     modifier = Modifier.fillMaxWidth().height(44.dp),

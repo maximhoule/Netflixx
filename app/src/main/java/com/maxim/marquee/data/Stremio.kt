@@ -123,6 +123,17 @@ object Repo {
         addons = parseAddons(arr)
     }
 
+    private val SPORTS = Regex(
+        "sport|\\blive\\b|ppv|\\bnba\\b|\\bnfl\\b|\\bnhl\\b|\\bmlb\\b|\\bufc\\b|\\bmma\\b|\\bf1\\b|formula|football|soccer|" +
+            "boxing|wrestling|\\bwwe\\b|tennis|golf|cricket|rugby|hockey|basketball|baseball|motogp|nascar|match|game day",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** Sports and live TV: live-channel catalog types, or a sports/live name on the catalog or its addon. */
+    fun isSports(a: Addon, c: Catalog): Boolean =
+        c.type.lowercase() in setOf("tv", "channel", "channels", "events", "event", "sports", "sport", "live") ||
+            SPORTS.containsMatchIn(c.name) || SPORTS.containsMatchIn(c.id) || SPORTS.containsMatchIn(a.name)
+
     /** Catalogs that show on the board without needing a search term or genre. */
     fun boardCatalogs(type: String?): List<Pair<Addon, Catalog>> =
         addons.flatMap { a ->

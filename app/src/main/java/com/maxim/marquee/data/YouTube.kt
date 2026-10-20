@@ -20,7 +20,14 @@ import java.util.concurrent.TimeUnit
 object YouTube {
     private const val TTL_MS = 3 * 60 * 60 * 1000L // stream links expire after ~6 h
 
-    private class Hit(val url: String?, val at: Long)
+    private const val REFUSED_TTL_MS = 20 * 60 * 1000L
+
+    private class Hit(val url: String?, val at: Long) {
+        fun fresh() = System.currentTimeMillis() - at < if (url != null) TTL_MS else REFUSED_TTL_MS
+    }
+
+    private val US = ContentCountry("US")
+    private val EN = Localization("en", "US")
 
     private val cache = HashMap<String, Hit>()
 
@@ -31,7 +38,7 @@ object YouTube {
         if (ready) return
         synchronized(this) {
             if (!ready) {
-                NewPipe.init(Fetcher, Localization("en", "US"), ContentCountry("US"))
+                NewPipe.init(Fetcher, EN, US)
                 ready = true
             }
         }
@@ -39,35 +46,44 @@ object YouTube {
 
     /** Cached result only; doesn't touch the network. */
     fun cached(id: String): String? = synchronized(cache) {
-        cache[id]?.takeIf { System.currentTimeMillis() - it.at < TTL_MS }?.url
+        cache[id]?.takeIf { it.fresh() }?.url
     }
 
     /** The HLS address for a YouTube video, or null if YouTube won't give one. Blocking: call off the main thread. */
     fun hlsUrl(id: String): String? {
         synchronized(cache) {
-            cache[id]?.let { if (System.currentTimeMillis() - it.at < TTL_MS) return it.url }
+            cache[id]?.let { if (it.fresh()) return it.url }
         }
-        val url = try {
-            init()
-            val r = YoutubeStreamHelper.getVisionOsPlayerResponse(
-                ContentCountry("US"),
-                Localization("en", "US"),
-                id,
-                YoutubeParsingHelper.generateContentPlaybackNonce(),
-            )
-            val status = r.getObject("playabilityStatus")
-            val st = status.getString("status")
-            if (st != null && !st.equals("OK", ignoreCase = true)) {
-                android.util.Log.w("Marquee", "trailer $id: YouTube says $st (${status.getString("reason")})")
+        var reachable = false
+        var url: String? = null
+        // Apple Vision client first, then the iPhone one: both answer with an HLS stream.
+        for (client in listOf("visionOS", "iOS")) {
+            url = try {
+                init()
+                val cpn = YoutubeParsingHelper.generateContentPlaybackNonce()
+                val r = if (client == "visionOS") {
+                    YoutubeStreamHelper.getVisionOsPlayerResponse(US, EN, id, cpn)
+                } else {
+                    YoutubeStreamHelper.getIosPlayerResponse(US, EN, id, cpn, null)
+                }
+                reachable = true
+                val status = r.getObject("playabilityStatus")
+                val st = status.getString("status")
+                if (st != null && !st.equals("OK", ignoreCase = true)) {
+                    android.util.Log.w("Marquee", "trailer $id ($client): YouTube says $st (${status.getString("reason")})")
+                    null
+                } else {
+                    r.getObject("streamingData").getString("hlsManifestUrl").takeUnless { it.isNullOrEmpty() }
+                        .also { if (it == null) android.util.Log.w("Marquee", "trailer $id ($client): no stream offered") }
+                }
+            } catch (e: Throwable) {
+                android.util.Log.w("Marquee", "trailer $id ($client): couldn't reach YouTube (${e.javaClass.simpleName}: ${e.message?.take(160)})")
                 null
-            } else {
-                r.getObject("streamingData").getString("hlsManifestUrl").takeUnless { it.isNullOrEmpty() }
-                    .also { if (it == null) android.util.Log.w("Marquee", "trailer $id: no stream offered") }
             }
-        } catch (e: Throwable) {
-            android.util.Log.w("Marquee", "trailer $id: couldn't reach YouTube (${e.javaClass.simpleName}: ${e.message?.take(160)})")
-            return null // network trouble: not cached, try again next time
+            if (url != null) break
         }
+        // Network trouble isn't remembered (try again next time); a refusal is, for a while.
+        if (!reachable) return null
         synchronized(cache) { cache[id] = Hit(url, System.currentTimeMillis()) }
         return url
     }

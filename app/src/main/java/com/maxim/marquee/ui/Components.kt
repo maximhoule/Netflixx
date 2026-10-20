@@ -137,6 +137,29 @@ fun ProgressLine(fraction: Float, modifier: Modifier = Modifier) {
     }
 }
 
+/** Tile shapes, matching Stremio's posterShape values. */
+enum class CardShape(val aspect: Float, val width: Dp) {
+    POSTER(2f / 3f, 118.dp),
+    LANDSCAPE(16f / 9f, 236.dp),
+    SQUARE(1f, 150.dp);
+
+    companion object {
+        fun of(s: String?): CardShape? = when (s?.lowercase()) {
+            "landscape" -> LANDSCAPE
+            "square" -> SQUARE
+            "poster", "regular" -> POSTER
+            else -> null
+        }
+
+        /** Shape that fits an image's real width/height ratio. */
+        fun forAspect(a: Float): CardShape = when {
+            a > 1.25f -> LANDSCAPE
+            a > 0.85f -> SQUARE
+            else -> POSTER
+        }
+    }
+}
+
 @Composable
 fun PosterCard(
     item: CardItem,
@@ -144,10 +167,12 @@ fun PosterCard(
     focusRequester: FocusRequester? = null,
     onFocus: () -> Unit = {},
     onLongClick: (() -> Unit)? = null,
+    shape: CardShape = CardShape.POSTER,
+    onImageAspect: ((Float) -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     Tile(
-        modifier = Modifier.width(width).aspectRatio(2f / 3f),
+        modifier = Modifier.width(if (shape == CardShape.POSTER) width else shape.width).aspectRatio(shape.aspect),
         focusRequester = focusRequester,
         onFocus = onFocus,
         onLongClick = onLongClick,
@@ -168,6 +193,10 @@ fun PosterCard(
                 model = item.meta.poster,
                 contentDescription = item.meta.name,
                 contentScale = ContentScale.Crop,
+                onSuccess = { st ->
+                    val sz = st.painter.intrinsicSize
+                    if (onImageAspect != null && sz.width > 0f && sz.height > 0f) onImageAspect(sz.width / sz.height)
+                },
                 modifier = Modifier.fillMaxSize(),
             )
         }

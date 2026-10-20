@@ -30,6 +30,41 @@ object Tmdb {
 
     data class Collection(val name: String, val items: List<MetaItem>)
 
+    /** Age rating and logo artwork for a title. */
+    data class Extras(val certification: String?, val logo: String?)
+
+    private val extrasCache = android.util.LruCache<String, Extras>(300)
+
+    fun cachedExtras(imdbId: String): Extras? = extrasCache.get(imdbId)
+
+    /** Age rating for your country (falls back to the US one) and the English logo. */
+    suspend fun extras(type: String, imdbId: String): Extras? {
+        val tt = imdbId.substringBefore(':')
+        if (!configured || !tt.startsWith("tt")) return null
+        extrasCache.get(tt)?.let { return it }
+        val found = get("/find/$tt?external_source=imdb_id") ?: return null
+        val tv = type == "series"
+        val id = found.arr(if (tv) "tv_results" else "movie_results").objects().firstOrNull()?.long("id")
+            ?: found.arr(if (tv) "movie_results" else "tv_results").objects().firstOrNull()?.long("id")
+            ?: return null
+        val o = if (tv) get("/tv/$id?append_to_response=content_ratings,images&include_image_language=en,null")
+        else get("/movie/$id?append_to_response=release_dates,images&include_image_language=en,null")
+        o ?: return null
+        val countries = listOf(java.util.Locale.getDefault().country.ifBlank { "US" }, "US").distinct()
+        val cert = countries.firstNotNullOfOrNull { cc ->
+            if (tv) {
+                o.obj("content_ratings")?.arr("results").objects().firstOrNull { it.str("iso_3166_1") == cc }?.str("rating")
+            } else {
+                o.obj("release_dates")?.arr("results").objects().firstOrNull { it.str("iso_3166_1") == cc }
+                    ?.arr("release_dates").objects().mapNotNull { it.str("certification") }.firstOrNull()
+            }?.takeIf { it.isNotBlank() }
+        }
+        val logos = o.obj("images")?.arr("logos").objects()
+        val logo = (logos.firstOrNull { it.str("iso_639_1") == "en" } ?: logos.firstOrNull())
+            ?.str("file_path")?.let { "https://image.tmdb.org/t/p/w500$it" }
+        return Extras(cert, logo).also { extrasCache.put(tt, it) }
+    }
+
     /** The franchise a movie belongs to, in release order, or null. */
     suspend fun collectionFor(imdbId: String): Collection? = coroutineScope {
         if (!configured || !imdbId.startsWith("tt")) return@coroutineScope null

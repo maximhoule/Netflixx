@@ -448,7 +448,15 @@ fun SettingsScreen(model: AppModel) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text("Settings", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 10.dp))
-        SettingRow("Play the best source automatically", onOff(Store.autoplay), "Off shows the source list every time", firstFr) {
+        SettingRow(
+            "Profile", Store.activeProfile.name,
+            "Each profile has its own Stremio account, Continue Watching, My List and settings · select to switch or add",
+            firstFr,
+        ) { model.openProfiles() }
+        model.copySources().forEach { p ->
+            SettingRow("Copy addons from ${p.name}", "", "Replaces this account's Stremio addons with ${p.name}'s") { model.offerCopyFrom = p }
+        }
+        SettingRow("Play the best source automatically", onOff(Store.autoplay), "Off shows the source list every time") {
             Store.autoplay = !Store.autoplay; version++
         }
         SettingRow("Autoplay next episode", onOff(Store.autoNext)) { Store.autoNext = !Store.autoNext; version++ }
@@ -477,6 +485,9 @@ fun SettingsScreen(model: AppModel) {
             "Plays the trailer behind the billboard when you rest on a title",
         ) {
             Store.trailerMode = (Store.trailerMode + 1) % 3; version++
+        }
+        SettingRow("Expanding cards", onOff(Store.expandCards), "Posters widen into a preview when you rest on them") {
+            Store.expandCards = !Store.expandCards; version++
         }
         SettingRow("Skip intros automatically", onOff(Store.autoSkipIntro), "Otherwise a Skip Intro button appears (IntroDB data)") {
             Store.autoSkipIntro = !Store.autoSkipIntro; version++
@@ -674,7 +685,10 @@ fun LoginScreen(model: AppModel) {
         Column(Modifier.weight(1f).padding(end = 40.dp)) {
             Text("MARQUEE", color = C.Red, fontSize = 52.sp, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(16.dp))
-            Text("Sign in with your Stremio account", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                if (model.profiles.size > 1) "${Store.activeProfile.name}: sign in with a Stremio account" else "Sign in with your Stremio account",
+                color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
+            )
             Spacer(Modifier.height(10.dp))
             Text(
                 "Your addons (Duck Streams included), library, Continue Watching and progress load automatically. Nothing to set up here.",
@@ -700,6 +714,10 @@ fun LoginScreen(model: AppModel) {
             )
             Spacer(Modifier.height(20.dp))
             ActionButton(if (busy) "Signing in…" else "Sign in", modifier = Modifier.fillMaxWidth(), onClick = { submit() })
+            if (model.profiles.size > 1) {
+                Spacer(Modifier.height(10.dp))
+                ActionButton("Switch profile", modifier = Modifier.fillMaxWidth(), onClick = { model.openProfiles() })
+            }
             error?.let {
                 Spacer(Modifier.height(12.dp))
                 Text(it, color = C.Red, fontSize = 15.sp)

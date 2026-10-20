@@ -76,6 +76,13 @@ class TrailerPlayer(ctx: Context) {
         view?.onResume()
     }
 
+    fun destroy() {
+        runCatching {
+            (view?.parent as? ViewGroup)?.removeView(view)
+            view?.destroy()
+        }
+    }
+
     private inner class Bridge {
         @JavascriptInterface
         fun onState(state: Int) {

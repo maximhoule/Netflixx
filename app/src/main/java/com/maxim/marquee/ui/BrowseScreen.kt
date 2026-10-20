@@ -222,11 +222,11 @@ private fun HeroBackdrop(model: AppModel, b: BrowseState, modifier: Modifier) {
     val ytId = b.heroMeta?.trailer
     LaunchedEffect(ytId, hero?.meta?.id, trailersOn) {
         if (!trailersOn) return@LaunchedEffect
-        val tp = model.trailer
-        tp.stop()
+        model.stopTrailer()
         if (ytId == null) return@LaunchedEffect
         delay(2_200)
-        tp.play(ytId, muted = Store.trailerMode == 1)
+        // The trailer player is created here, the first time, while you're resting on a title.
+        model.trailer.play(ytId, muted = Store.trailerMode == 1)
     }
     DisposableEffect(Unit) { onDispose { model.stopTrailer() } }
     val trailerLayer: (@Composable () -> Unit)? = if (trailersOn) {
@@ -261,7 +261,7 @@ private fun BoxScope.HeroInfo(model: AppModel, b: BrowseState) {
 
 @Composable
 private fun TrailerLayer(model: AppModel) {
-    val tp = model.trailer
+    val tp = model.trailerIfReady ?: return
     val web = tp.view ?: return
     val alpha by animateFloatAsState(if (tp.playing) 1f else 0f, tween(if (tp.playing) 800 else 200), label = "trailerAlpha")
     AndroidView(
@@ -315,15 +315,16 @@ fun CatalogRow(
                     itemsIndexed(items, key = { i, it -> "$i|${it.meta.id}" }) { i, item ->
                         val key = "${row.key}#$i"
                         val fr = remember { FocusRequester() }
-                        LaunchedEffect(b.pendingFocusKey) {
-                            if (b.pendingFocusKey == key) {
+                        // Only the card that should take focus runs this (not one task per card).
+                        if (b.pendingFocusKey == key) {
+                            LaunchedEffect(key) {
                                 withFrameNanos { }
                                 try {
                                     fr.requestFocus()
                                 } catch (e: Exception) {
                                     // not attached yet
                                 }
-                                b.pendingFocusKey = null
+                                if (b.pendingFocusKey == key) b.pendingFocusKey = null
                             }
                         }
                         val onCardClick = {

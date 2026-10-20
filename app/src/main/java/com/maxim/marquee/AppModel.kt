@@ -104,6 +104,7 @@ sealed class RowSource {
 data class RowModel(val key: String, val title: String, val source: RowSource)
 
 /** Everything a browse page needs to look the same when you come back to it. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 class BrowseState(val type: String?, val withContinue: Boolean, val sportsOnly: Boolean = false) {
     val columnState = LazyListState()
     val rowStates = HashMap<String, LazyListState>()
@@ -120,7 +121,13 @@ class BrowseState(val type: String?, val withContinue: Boolean, val sportsOnly: 
     var pendingFocusKey by mutableStateOf<String?>(null)
     var signature = ""
 
-    fun rowState(key: String) = rowStates.getOrPut(key) { LazyListState() }
+    /**
+     * Each row builds its first 8 posters ahead of time, in idle moments while the row above is on
+     * screen, so moving down never has to build a whole row at once.
+     */
+    fun rowState(key: String) = rowStates.getOrPut(key) {
+        LazyListState(prefetchStrategy = androidx.compose.foundation.lazy.LazyListPrefetchStrategy(nestedPrefetchItemCount = 8))
+    }
 
     fun firstKey(): String? = rows.firstOrNull { !rowItems[it.key].isNullOrEmpty() }?.let { "${it.key}#0" }
 
@@ -221,9 +228,14 @@ class AppModel(private val activity: MainActivity) {
     val myListGrid = LazyGridState()
     var myListFocus = -1
 
-    private var trailerPlayer: TrailerPlayer? = null
-    /** Created on first use, only if background trailers are enabled. */
+    private var trailerPlayer by mutableStateOf<TrailerPlayer?>(null)
+    /**
+     * Created on first use, only if background trailers are on. Creating the web player freezes the
+     * screen for a moment, so it only happens once you've rested on a title (never while browsing).
+     */
     val trailer: TrailerPlayer get() = trailerPlayer ?: TrailerPlayer(activity).also { trailerPlayer = it }
+    /** The trailer player if it already exists (doesn't create it). */
+    val trailerIfReady: TrailerPlayer? get() = trailerPlayer
     fun pauseTrailer() = trailerPlayer?.onPause()
     fun resumeTrailer() = trailerPlayer?.onResume()
     fun stopTrailer() = trailerPlayer?.stop()
@@ -273,8 +285,6 @@ class AppModel(private val activity: MainActivity) {
             }
             syncing = true
             addonError = null
-            // Create the trailer player now, while Home is loading, not later in the middle of browsing.
-            if (Store.trailerMode != 0) scope.launch { delay(600); trailer }
             try {
                 Repo.refreshAddons()
             } catch (e: CancellationException) {

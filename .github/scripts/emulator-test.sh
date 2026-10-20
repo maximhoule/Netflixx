@@ -111,22 +111,33 @@ measure_end player_ui
 adb shell dumpsys meminfo $PKG | grep -E "TOTAL PSS|TOTAL:|Java Heap|Native Heap|Graphics" | head -6 | sed 's/^/player memory: /' | tee -a "$OUT/summary.txt"
 key BACK; sleep 1; key BACK; sleep 3; shot after_player
 
-summary "== warm start (saved data)"
+adb logcat -d > "$OUT/logcat_first_run.txt"
+grep -E "Choreographer.*Skipped [0-9]+ frames" "$OUT/logcat_first_run.txt" | head -10 | sed 's/^/first run skipped: /' | tee -a "$OUT/summary.txt"
+adb logcat -c
+
+summary "== after the TV's background optimisation (app compiled with its profile)"
+adb shell cmd package compile -m speed-profile -f $PKG 2>&1 | tail -1 | tee -a "$OUT/summary.txt"
 adb shell am force-stop $PKG; sleep 2
 adb shell am start -W -n $PKG/.MainActivity | grep -E "TotalTime" | tee -a "$OUT/summary.txt"
-sleep 2; shot warm_start_2s
-sleep 6
+sleep 2; shot compiled_start_2s
+sleep 8
+measure_start
+key DPAD_DOWN; sleep 1.5; key DPAD_RIGHT DPAD_RIGHT; sleep 2
+for i in 1 2 3 4 5; do key DPAD_DOWN; sleep 1.5; done
+fast DPAD_RIGHT 20; sleep 1; fast DPAD_UP 10; sleep 2
+measure_end browse_compiled
 adb shell dumpsys meminfo $PKG | grep -E "TOTAL PSS|TOTAL:" | head -2 | sed 's/^/home memory: /' | tee -a "$OUT/summary.txt"
 
 summary "== results"
 adb logcat -d > "$OUT/logcat.txt"
+grep -E "Choreographer.*Skipped [0-9]+ frames" "$OUT/logcat.txt" | head -10 | sed 's/^/compiled skipped: /' | tee -a "$OUT/summary.txt"
+cat "$OUT/logcat_first_run.txt" "$OUT/logcat.txt" > "$OUT/logcat_all.txt"; mv "$OUT/logcat_all.txt" "$OUT/logcat.txt"
 if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt"; then
   summary "CRASHES:"; grep -A25 "FATAL EXCEPTION" "$OUT/logcat.txt" | head -150 | tee -a "$OUT/summary.txt"
 else
   summary "No crashes."
 fi
 grep -E "ANR in $PKG" "$OUT/logcat.txt" | tee -a "$OUT/summary.txt" || true
-grep -E "Choreographer.*Skipped [0-9]+ frames" "$OUT/logcat.txt" | tee "$OUT/skipped.txt" | head -20 | sed 's/^/skipped: /' | tee -a "$OUT/summary.txt"
 grep -E " Marquee *:" "$OUT/logcat.txt" > "$OUT/marquee_log.txt" || true
 summary "App log lines: $(wc -l < "$OUT/marquee_log.txt")"; grep -E "GET failed" "$OUT/marquee_log.txt" | head -20 | tee -a "$OUT/summary.txt"
 grep -E "ExoPlayerImplInternal|MediaCodecRenderer|AudioTrack|DefaultAudioSink" "$OUT/logcat.txt" | grep -E " E | W " | head -40 > "$OUT/player_errors.txt" || true

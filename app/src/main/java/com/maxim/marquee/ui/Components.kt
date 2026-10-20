@@ -220,15 +220,19 @@ fun PosterCard(
         onClick = onClick,
     ) {
         Box(Modifier.fillMaxSize().background(C.Surface))
-        Text(
-            item.meta.name,
-            color = C.Dim,
-            fontSize = 13.sp,
-            textAlign = TextAlign.Center,
-            maxLines = 4,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.align(Alignment.Center).padding(8.dp),
-        )
+        // The title as text only when there's no artwork (laying out text for every card costs time).
+        var imageFailed by remember(item.meta.poster) { mutableStateOf(false) }
+        if (item.meta.poster == null || imageFailed) {
+            Text(
+                item.meta.name,
+                color = C.Dim,
+                fontSize = 13.sp,
+                textAlign = TextAlign.Center,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.align(Alignment.Center).padding(8.dp),
+            )
+        }
         if (item.meta.poster != null) {
             AsyncImage(
                 model = item.meta.poster,
@@ -238,6 +242,7 @@ fun PosterCard(
                     val sz = st.painter.intrinsicSize
                     if (onImageAspect != null && sz.width > 0f && sz.height > 0f) onImageAspect(sz.width / sz.height)
                 },
+                onError = { imageFailed = true },
                 modifier = Modifier.width(baseW).fillMaxHeight(),
             )
         }

@@ -46,10 +46,19 @@ fun QrCode(text: String, size: Dp) {
 @Composable
 fun rememberPhoneSetup(model: AppModel): String? {
     var url by remember { mutableStateOf<String?>(null) }
-    DisposableEffect(Unit) {
-        val server = PhoneSetup { form -> model.applySetup(form) }
+    var attempt by remember { mutableStateOf(0) }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    DisposableEffect(attempt) {
+        val server = PhoneSetup(ctx.applicationContext) { form -> model.applySetup(form) }
         url = server.start()
         onDispose { server.stop() }
+    }
+    // Network still connecting when the screen opened: try again every couple of seconds.
+    LaunchedEffect(url, attempt) {
+        if (url == null && attempt < 30) {
+            kotlinx.coroutines.delay(2_000)
+            attempt++
+        }
     }
     return url
 }

@@ -135,6 +135,9 @@ fast DPAD_RIGHT 20; sleep 1; fast DPAD_UP 10; sleep 2
 measure_end browse_compiled
 adb shell dumpsys meminfo $PKG | grep -E "TOTAL PSS|TOTAL:" | head -2 | sed 's/^/home memory: /' | tee -a "$OUT/summary.txt"
 
+summary "== sign out: sign-in screen with the phone QR code"
+tab 7; sleep 2; fast DPAD_DOWN 45; sleep 1; key DPAD_CENTER; sleep 4; shot sign_in_qr
+
 summary "== results"
 adb logcat -d > "$OUT/logcat.txt"
 grep -E "Choreographer.*Skipped [0-9]+ frames" "$OUT/logcat.txt" | head -10 | sed 's/^/compiled skipped: /' | tee -a "$OUT/summary.txt"

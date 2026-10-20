@@ -27,7 +27,7 @@ import java.net.URLDecoder
  * your home network. Scan the QR code, fill in the form on your phone, and the TV signs in.
  * Nothing leaves your network; the server stops as soon as you leave the screen.
  */
-class PhoneSetup(private val onSubmit: suspend (Map<String, String>) -> String) {
+class PhoneSetup(private val ctx: android.content.Context, private val onSubmit: suspend (Map<String, String>) -> String) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var server: ServerSocket? = null
     private var job: Job? = null
@@ -38,7 +38,7 @@ class PhoneSetup(private val onSubmit: suspend (Map<String, String>) -> String) 
 
     fun start(): String? {
         if (server != null) return url
-        val ip = localIp() ?: return null
+        val ip = localIp(ctx) ?: return null
         val socket = (8899..8910).firstNotNullOfOrNull { p -> runCatching { ServerSocket(p) }.getOrNull() } ?: return null
         socket.soTimeout = 1_000
         server = socket
@@ -151,7 +151,25 @@ any name, Redirect URI <b>urn:ietf:wg:oauth:2.0:oob</b>. Paste its keys here; th
 <button type="submit">Send to TV</button></form></body></html>"""
 
     companion object {
-        fun localIp(): String? = runCatching {
+        /**
+         * The TV's address on your home network. Asks Android's connectivity service first (works on
+         * every version); the interface scan is only a fallback (newer Android restricts it).
+         */
+        fun localIp(ctx: android.content.Context): String? {
+            runCatching {
+                val cm = ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+                val nets = listOfNotNull(cm.activeNetwork) + cm.allNetworks.toList()
+                for (n in nets.distinct()) {
+                    val lp = cm.getLinkProperties(n) ?: continue
+                    lp.linkAddresses.map { it.address }
+                        .firstOrNull { it is Inet4Address && !it.isLoopbackAddress && !it.isLinkLocalAddress }
+                        ?.hostAddress?.let { return it }
+                }
+            }
+            return scanInterfaces()
+        }
+
+        private fun scanInterfaces(): String? = runCatching {
             NetworkInterface.getNetworkInterfaces().toList()
                 .filter { it.isUp && !it.isLoopback }
                 .sortedBy { if (it.name.startsWith("eth")) 0 else if (it.name.startsWith("wlan")) 1 else 2 }

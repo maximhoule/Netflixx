@@ -39,6 +39,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
@@ -75,7 +76,8 @@ sealed class Screen {
 
 sealed class RowSource {
     data object Continue : RowSource()
-    data class Cat(val addon: Addon, val catalog: Catalog) : RowSource()
+    /** One catalog, plus any other addons' catalogs with the same name (merged, no duplicates). */
+    data class Cat(val addon: Addon, val catalog: Catalog, val more: List<Pair<Addon, Catalog>> = emptyList()) : RowSource()
     data object Static : RowSource()
     /** kind: "resume", "nextup" or "latest" (with a library id). */
     data class Emby(val kind: String, val libraryId: String? = null) : RowSource()
@@ -129,6 +131,7 @@ class AppModel(private val activity: MainActivity) {
     var addonCount by mutableIntStateOf(0)
     var syncing by mutableStateOf(false)
     var embyLibraries by mutableStateOf<List<com.maxim.marquee.data.Emby.Library>>(emptyList())
+    private var embyEntries: List<com.maxim.marquee.data.Emby.Entry> = emptyList()
     var railFocused = false
     var cardMenu by mutableStateOf<CardMenu?>(null)
     /** Whether the TV can show Dolby Vision; DV-only sources are avoided when it can't. */
@@ -200,6 +203,7 @@ class AppModel(private val activity: MainActivity) {
 
     private suspend fun loadEmbyLibraries() {
         embyLibraries = if (com.maxim.marquee.data.Emby.connected) com.maxim.marquee.data.Emby.libraries() else emptyList()
+        if (com.maxim.marquee.data.Emby.connected) com.maxim.marquee.data.Emby.buildIndex(force = true)
     }
 
     fun embyLogin(address: String, user: String, password: String, onError: (String) -> Unit) {
@@ -208,6 +212,7 @@ class AppModel(private val activity: MainActivity) {
                 com.maxim.marquee.data.Emby.login(address, user, password)
                 loadEmbyLibraries()
                 rebuildRows(force = true)
+                loadLibrary()
                 toast("Connected to Emby")
                 back()
             } catch (e: CancellationException) {
@@ -221,7 +226,9 @@ class AppModel(private val activity: MainActivity) {
     fun embySignOut() {
         Store.embySignOut()
         embyLibraries = emptyList()
+        embyEntries = emptyList()
         rebuildRows(force = true)
+        refreshContinue()
     }
 
     fun login(email: String, password: String, onError: (String) -> Unit) {
@@ -268,12 +275,12 @@ class AppModel(private val activity: MainActivity) {
         library = Repo.library()
         refreshContinue()
         if (com.maxim.marquee.data.Emby.connected) {
-            val resume = com.maxim.marquee.data.Emby.resume()
-            val next = com.maxim.marquee.data.Emby.nextUp()
-            browse.values.filter { it.withContinue }.forEach { b ->
-                if (b.rows.any { it.key == "emby-resume" }) { b.rowItems["emby-resume"] = resume; b.loaded["emby-resume"] = true }
-                if (b.rows.any { it.key == "emby-nextup" }) { b.rowItems["emby-nextup"] = next; b.loaded["emby-nextup"] = true }
-            }
+            com.maxim.marquee.data.Emby.buildIndex()
+            embyEntries = com.maxim.marquee.data.Emby.resume() + com.maxim.marquee.data.Emby.nextUp()
+            refreshContinue()
+        } else if (embyEntries.isNotEmpty()) {
+            embyEntries = emptyList()
+            refreshContinue()
         }
     }
 
@@ -293,10 +300,6 @@ class AppModel(private val activity: MainActivity) {
             val defs = mutableListOf<RowModel>()
             if (b.withContinue) defs += RowModel("continue", "Continue Watching", RowSource.Continue)
             if (com.maxim.marquee.data.Emby.connected) {
-                if (b.withContinue) {
-                    defs += RowModel("emby-resume", "Continue Watching on Emby", RowSource.Emby("resume"))
-                    defs += RowModel("emby-nextup", "Next Up on Emby", RowSource.Emby("nextup"))
-                }
                 embyLibraries.filter { lib ->
                     when (b.type) {
                         "series" -> lib.type == "tvshows"
@@ -307,9 +310,17 @@ class AppModel(private val activity: MainActivity) {
                     defs += RowModel("emby-latest-${lib.id}", "New in ${lib.name}", RowSource.Emby("latest", lib.id))
                 }
             }
-            Repo.boardCatalogs(b.type).forEachIndexed { i, (a, c) ->
-                defs += RowModel("${a.transportUrl.hashCode()}|${c.type}|${c.id}|$i", rowTitle(c), RowSource.Cat(a, c))
-            }
+            // Rows with the same name from different addons (e.g. two "Popular Movies") become one row.
+            Repo.boardCatalogs(b.type)
+                .groupBy { (_, c) -> rowTitle(c).lowercase() }
+                .values
+                .forEachIndexed { i, group ->
+                    val (a, c) = group.first()
+                    defs += RowModel(
+                        "${a.transportUrl.hashCode()}|${c.type}|${c.id}|$i", rowTitle(c),
+                        RowSource.Cat(a, c, group.drop(1)),
+                    )
+                }
             b.reset(defs)
             b.signature = sig
             if (b.withContinue) {
@@ -340,7 +351,9 @@ class AppModel(private val activity: MainActivity) {
             }
             is RowSource.Cat -> {
                 scope.launch {
-                    val items = Repo.catalog(src.addon, src.catalog).distinctBy { it.id }.map { CardItem(it) }
+                    val parts = listOf(src.addon to src.catalog) + src.more
+                    val items = parts.map { (a, c) -> async { Repo.catalog(a, c) } }.awaitAll()
+                        .flatten().distinctBy { it.id }.map { CardItem(it) }
                     b.rowItems[row.key] = items
                     b.loaded[row.key] = true
                     afterRowLoaded(b)
@@ -427,6 +440,7 @@ class AppModel(private val activity: MainActivity) {
     private data class Cand(
         val metaId: String, val type: String, val name: String, val poster: String?,
         val videoId: String, val pos: Long, val dur: Long, val time: Long, val shape: String? = null,
+        val badge: String? = null,
     )
 
     /**
@@ -458,6 +472,17 @@ class AppModel(private val activity: MainActivity) {
                 byId[metaId] = Cand(metaId, p.type, p.name, p.poster ?: lib?.poster, p.videoId, p.position, p.duration, p.updated, lib?.posterShape)
             }
         }
+        // Emby: in-progress and next-up episodes join the same row; the newest position wins.
+        embyEntries.forEach { e ->
+            val m = e.card.meta
+            val existing = byId[m.id]
+            if (existing == null || e.time > existing.time) {
+                byId[m.id] = Cand(
+                    m.id, m.type, m.name, m.poster ?: existing?.poster, e.card.videoId ?: m.id,
+                    e.position, e.duration, e.time, m.posterShape ?: existing?.shape, e.card.badge,
+                )
+            }
+        }
         return byId.values
             .sortedByDescending { it.time }
             .take(50)
@@ -467,7 +492,7 @@ class AppModel(private val activity: MainActivity) {
                     videoId = c.videoId,
                     progress = if (c.dur > 0 && c.pos > 1) (c.pos.toFloat() / c.dur).coerceIn(0.02f, 1f) else null,
                     badge = if (c.type == "series") {
-                        episodeLabel(c.videoId)?.let { if (c.pos == 1L) "NEXT · $it" else it }
+                        episodeLabel(c.videoId)?.let { if (c.pos == 1L) "NEXT · $it" else it } ?: c.badge
                     } else null,
                 )
             }
@@ -584,7 +609,7 @@ class AppModel(private val activity: MainActivity) {
         val cap = if (Store.maxQuality > 0) Store.maxQuality else displayMaxHeight
         fun ok(s: StreamItem): Boolean {
             val q = s.quality
-            if (q.res > cap) return false
+            if (q.res > cap && s.embyId == null) return false
             if (q.dvOnly && !supportsDV) return false
             if (q.av1 && !av1Hardware) return false
             return true
@@ -624,9 +649,14 @@ class AppModel(private val activity: MainActivity) {
 
     /** Start looking up sources before you press Play, so playback starts almost instantly. */
     fun prefetch(type: String, videoId: String) {
-        if (!Store.autoplay) return
-        streamsFor(type, videoId)
-        subsFor(type, videoId)
+        if (com.maxim.marquee.data.Emby.connected) {
+            // Also loads Emby's resume points for this title, so episode progress shows up.
+            val d = streamsFor(type, videoId)
+            scope.launch { runCatching { d.await() }; localVersion++ }
+        } else if (Store.autoplay) {
+            streamsFor(type, videoId)
+        }
+        if (Store.autoplay) subsFor(type, videoId)
     }
 
     fun play(req: PlayReq, chooseSource: Boolean = false, autoChain: Int = 0) {

@@ -94,6 +94,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
                 .putExtra("nextTitle", next?.title)
                 .putExtra("episodes", eps.toString())
                 .putExtra("autoChain", autoChain)
+                .putExtra("embyId", s.embyId)
         }
     }
 
@@ -110,6 +111,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
     private var name = ""
     private var poster: String? = null
     private var autoChain = 0
+    private var embyId: String? = null
 
     override val title: String get() = name
     override var episode: String? = null
@@ -149,6 +151,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         poster = intent.getStringExtra("poster")
         episode = intent.getStringExtra("episode")
         autoChain = intent.getIntExtra("autoChain", 0)
+        embyId = intent.getStringExtra("embyId")
         intent.getStringExtra("nextId")?.let { id ->
             next = EpisodeRef(id, intent.getStringExtra("nextLabel") ?: "", intent.getStringExtra("nextTitle") ?: "")
         }
@@ -696,6 +699,9 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         if (sync && Store.syncProgress) {
             val t = type; val m = metaId; val v = videoId; val nx = next?.id; val n = name; val ps = poster
             AppScope.launch { Repo.syncProgress(t, m, v, p, dur, finished, nx, n, ps, stopped) }
+            // Played from your Emby server: keep Emby's resume point and watched state in step too.
+            val e = embyId
+            if (e != null && e != v) AppScope.launch { runCatching { com.maxim.marquee.data.Emby.report(e, p, finished, stopped) } }
         }
     }
 

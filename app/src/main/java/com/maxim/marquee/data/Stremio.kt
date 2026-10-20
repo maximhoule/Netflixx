@@ -1,5 +1,6 @@
 package com.maxim.marquee.data
 
+import com.maxim.marquee.AppScope
 import android.util.LruCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -128,6 +129,32 @@ object Repo {
     /** Every playable stream, best first (addon order, then the addon's own ranking). */
     suspend fun allStreams(type: String, videoId: String): List<StreamItem> = coroutineScope {
         streamAddons(type, videoId).map { a -> async { fetchStreams(a, type, videoId) } }.awaitAll().flatten()
+    }
+
+    /**
+     * Streams for playback, fast: returns as soon as the highest-priority addon that has
+     * results has answered (and every addon above it in your order has finished), instead
+     * of waiting for the slowest addon. Hard cap of 15 seconds.
+     */
+    suspend fun bestStreams(type: String, videoId: String): List<StreamItem> {
+        val list = streamAddons(type, videoId)
+        if (list.isEmpty()) return emptyList()
+        // Detached, so a slow addon never holds up playback; it just finishes in the background.
+        val pending = list.map { a -> AppScope.async { fetchStreams(a, type, videoId) } }
+        val deadline = System.currentTimeMillis() + 15_000
+        val out = ArrayList<List<StreamItem>>()
+        for (d in pending) {
+            val left = deadline - System.currentTimeMillis()
+            val r = if (left > 0) withTimeoutOrNull(left) { d.await() } else null
+            if (r == null) break
+            out += r
+            if (r.isNotEmpty()) break
+        }
+        // Lower-priority addons that already answered become fallbacks.
+        pending.drop(out.size).forEach { d ->
+            if (d.isCompleted && !d.isCancelled) runCatching { out += d.await() }
+        }
+        return out.flatten()
     }
 
     /** Emits (addonIndex, addon, streams) as each addon answers. */

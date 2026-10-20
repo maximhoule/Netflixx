@@ -121,7 +121,8 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
     private var outcomeVideo: String? = null
     private var outcomeAuto = false
     private var retriedWithoutSubs = false
-    private var retriedOnce = false
+    private var netRetries = 0
+    private var forceHls = false
     private var started = false
     private var consumedKey = -1
     private var finishing = false
@@ -203,6 +204,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http)))
             .setSeekBackIncrementMs(10_000)
             .setSeekForwardIncrementMs(10_000)
+            .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
         player.setAudioAttributes(
             androidx.media3.common.AudioAttributes.Builder()
@@ -237,25 +239,49 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
 
             override fun onPlayerError(error: PlaybackException) {
                 val pos = player.currentPosition
-                if (!retriedWithoutSubs && subs.isNotEmpty() && !started) {
+                val live = player.isCurrentMediaItemLive
+                val code = error.errorCode
+                when {
+                    // Live stream fell behind the window: jump back to the live edge.
+                    code == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW -> {
+                        player.seekToDefaultPosition(); player.prepare(); player.play()
+                        return
+                    }
+                    // Unrecognised container: many IPTV/live links are HLS without ".m3u8" in the URL.
+                    !started && code == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED && !forceHls -> {
+                        forceHls = true
+                        player.setMediaItem(mediaItem(withSubs = false))
+                        player.prepare(); player.play()
+                        return
+                    }
                     // A broken subtitle file can stop playback; try again without them.
-                    retriedWithoutSubs = true
-                    player.setMediaItem(mediaItem(withSubs = false), pos)
-                    player.prepare(); player.play()
-                    return
+                    !started && subs.isNotEmpty() && !retriedWithoutSubs -> {
+                        retriedWithoutSubs = true
+                        if (pos > 0) player.setMediaItem(mediaItem(withSubs = false), pos) else player.setMediaItem(mediaItem(withSubs = false))
+                        player.prepare(); player.play()
+                        return
+                    }
+                    // Network hiccup mid-show: reconnect from the same spot, backing off a little each time.
+                    started && code in 2000..2999 && netRetries < 4 -> {
+                        netRetries++
+                        flash("Reconnecting…")
+                        lifecycleScope.launch {
+                            delay(1_000L * netRetries)
+                            player.prepare()
+                            if (!live) player.seekTo(pos)
+                            player.play()
+                        }
+                        return
+                    }
                 }
-                if (started && !retriedOnce) {
-                    // Network hiccup mid-show: reconnect once from the same spot.
-                    retriedOnce = true
-                    player.prepare(); player.seekTo(pos); player.play()
-                    return
-                }
-                outcome = if (started) "exit" else "error"
+                // Unrecoverable: let the app switch to the next source (it resumes at the same spot).
+                outcome = "error"
                 finish()
             }
         })
 
-        player.setMediaItem(mediaItem(withSubs = true), start)
+        // No start position = default position, which is the live edge for live streams.
+        if (start > 0) player.setMediaItem(mediaItem(withSubs = true), start) else player.setMediaItem(mediaItem(withSubs = true))
         player.prepare()
         player.playWhenReady = true
 
@@ -293,8 +319,15 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
                 .setSelectionFlags(0)
                 .build()
         }
+        val lowerUrl = url.lowercase()
+        val mime = when {
+            forceHls || lowerUrl.contains(".m3u8") || lowerUrl.contains("m3u8") -> MimeTypes.APPLICATION_M3U8
+            lowerUrl.contains(".mpd") -> MimeTypes.APPLICATION_MPD
+            else -> null
+        }
         return MediaItem.Builder()
             .setUri(url)
+            .apply { if (mime != null) setMimeType(mime) }
             .setSubtitleConfigurations(subConfigs)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(name).build())
             .build()
@@ -311,6 +344,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             val dur = player.duration.takeIf { it > 0 && it != C.TIME_UNSET } ?: 0L
             ui.position = pos
             ui.duration = dur
+            ui.live = player.isCurrentMediaItemLive
             ui.buffered = player.bufferedPosition
             val now = System.currentTimeMillis()
 

@@ -174,7 +174,7 @@ data class SubTrack(val url: String, val lang: String, val label: String) {
 }
 
 /** What a source's name/description says about it: resolution, HDR, audio, size. */
-data class Quality(val res: Int, val dv: Boolean, val hdr: String?, val badges: List<String>) {
+data class Quality(val res: Int, val dv: Boolean, val hdr: String?, val badges: List<String>, val av1: Boolean = false) {
     /** Dolby Vision without an HDR10 fallback layer: shows wrong colours on TVs without DV. */
     val dvOnly get() = dv && hdr == null
 
@@ -220,8 +220,10 @@ data class Quality(val res: Int, val dv: Boolean, val hdr: String?, val badges: 
                 has("5.1") -> badges += "5.1"
             }
             if (has("remux")) badges += "REMUX"
+            val av1 = has("av1")
+            if (av1) badges += "AV1"
             SIZE.find(text)?.let { badges += it.groupValues[1].replace(',', '.') + " " + it.groupValues[2].uppercase().replace("I", "") }
-            return Quality(res, dv, hdr, badges)
+            return Quality(res, dv, hdr, badges, av1)
         }
     }
 }

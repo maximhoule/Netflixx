@@ -36,6 +36,7 @@ import com.maxim.marquee.data.typeLabel
 import com.maxim.marquee.ui.MovieIcon
 import com.maxim.marquee.ui.TvIcon
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -128,6 +129,10 @@ class AppModel(private val activity: MainActivity) {
     var cardMenu by mutableStateOf<CardMenu?>(null)
     /** Whether the TV can show Dolby Vision; DV-only sources are avoided when it can't. */
     var supportsDV = false
+    /** Tallest resolution the TV can display (1080 on a 1080p set, 2160 on 4K). */
+    var displayMaxHeight = 2160
+    /** AV1 only plays smoothly with a hardware decoder. */
+    var av1Hardware = false
     var handledTick = 0
 
     val browse = mapOf(
@@ -312,6 +317,12 @@ class AppModel(private val activity: MainActivity) {
         heroDebounce = scope.launch {
             delay(140)
             setHero(b, item)
+            // Resting on a Continue Watching tile: get its sources ready.
+            val vid = item.videoId
+            if (vid != null && !(item.meta.type == "series" && vid == item.meta.id)) {
+                delay(700)
+                prefetch(item.meta.type, vid)
+            }
         }
     }
 
@@ -498,15 +509,53 @@ class AppModel(private val activity: MainActivity) {
 
     /** Puts the sources the TV handles best first (respecting the max-quality setting). */
     private fun rank(streams: List<StreamItem>): List<StreamItem> {
-        val cap = Store.maxQuality
+        // "Best available" still never auto-picks above what the TV can show.
+        val cap = if (Store.maxQuality > 0) Store.maxQuality else displayMaxHeight
         fun ok(s: StreamItem): Boolean {
             val q = s.quality
-            if (cap > 0 && q.res > cap) return false
+            if (q.res > cap) return false
             if (q.dvOnly && !supportsDV) return false
+            if (q.av1 && !av1Hardware) return false
             return true
         }
         val (good, rest) = streams.partition { ok(it) }
         return good + rest
+    }
+
+    private val streamCache = HashMap<String, Pair<Long, Deferred<List<StreamItem>>>>()
+    private val subsCache = HashMap<String, Pair<Long, Deferred<List<SubTrack>>>>()
+
+    private fun streamsFor(type: String, videoId: String): Deferred<List<StreamItem>> {
+        val k = "$type/$videoId"
+        val now = System.currentTimeMillis()
+        streamCache[k]?.let { (t, d) -> if (now - t < 10 * 60_000 && !d.isCancelled) return d }
+        val d = scope.async {
+            try {
+                Repo.bestStreams(type, videoId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
+        streamCache[k] = now to d
+        return d
+    }
+
+    private fun subsFor(type: String, videoId: String): Deferred<List<SubTrack>> {
+        val k = "$type/$videoId"
+        val now = System.currentTimeMillis()
+        subsCache[k]?.let { (t, d) -> if (now - t < 10 * 60_000 && !d.isCancelled) return d }
+        val d = scope.async { withTimeoutOrNull(6_000) { Repo.subtitles(type, videoId) } ?: emptyList() }
+        subsCache[k] = now to d
+        return d
+    }
+
+    /** Start looking up sources before you press Play, so playback starts almost instantly. */
+    fun prefetch(type: String, videoId: String) {
+        if (!Store.autoplay) return
+        streamsFor(type, videoId)
+        subsFor(type, videoId)
     }
 
     fun play(req: PlayReq, chooseSource: Boolean = false, autoChain: Int = 0) {
@@ -516,17 +565,11 @@ class AppModel(private val activity: MainActivity) {
         playJob?.cancel()
         loading = req
         playJob = scope.launch {
-            val subs = async { withTimeoutOrNull(6_000) { Repo.subtitles(req.type, req.videoId) } ?: emptyList() }
-            val streams = try {
-                rank(Repo.allStreams(req.type, req.videoId))
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                emptyList()
-            }
+            val subs = subsFor(req.type, req.videoId)
+            val streams = rank(streamsFor(req.type, req.videoId).await())
             if (streams.isEmpty()) {
+                streamCache.remove("${req.type}/${req.videoId}")
                 loading = null
-                subs.cancel()
                 toast("No playable sources found")
                 stack.add(Screen.Streams(req))
                 return@launch
@@ -539,7 +582,7 @@ class AppModel(private val activity: MainActivity) {
         playJob?.cancel()
         loading = req
         playJob = scope.launch {
-            val subs = withTimeoutOrNull(6_000) { Repo.subtitles(req.type, req.videoId) } ?: emptyList()
+            val subs = subsFor(req.type, req.videoId).await()
             launchStream(Pending(req, streams, index, auto = false, attempts = 1, addonSubs = subs))
         }
     }

@@ -12,3 +12,8 @@
 
 # Keep readable stack traces.
 -keepattributes SourceFile,LineNumberTable
+
+# Trailer WebView bridge (called from JavaScript).
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}

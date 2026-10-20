@@ -49,6 +49,23 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {
             false
         }
+        try {
+            @Suppress("DEPRECATION")
+            val modes = windowManager.defaultDisplay.supportedModes
+            val tallest = modes.maxOfOrNull { minOf(it.physicalWidth, it.physicalHeight) } ?: 2160
+            model.displayMaxHeight = if (tallest >= 2000) 2160 else if (tallest >= 1400) 1440 else 1080
+        } catch (e: Exception) {
+            // keep default
+        }
+        model.av1Hardware = try {
+            android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
+                !info.isEncoder && info.supportedTypes.any { it.equals("video/av01", true) } &&
+                    if (Build.VERSION.SDK_INT >= 29) info.isHardwareAccelerated
+                    else !info.name.startsWith("OMX.google.") && !info.name.startsWith("c2.android.")
+            }
+        } catch (e: Exception) {
+            false
+        }
         setContent { AppRoot(model) { finish() } }
         model.start()
     }

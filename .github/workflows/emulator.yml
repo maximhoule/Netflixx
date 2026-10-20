@@ -5,6 +5,9 @@ name: Emulator test
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -49,3 +52,18 @@ jobs:
         with:
           name: emulator-results
           path: emu/
+
+      - name: Pack results
+        if: always()
+        run: cd emu && zip -qr ../emulator-results.zip .
+
+      # Pre-release, so the app's self-updater (which only looks at the latest full release) ignores it.
+      - name: Publish results
+        if: always()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: emulator-results-${{ github.run_number }}
+          name: Emulator test ${{ github.run_number }}
+          prerelease: true
+          make_latest: false
+          files: emulator-results.zip

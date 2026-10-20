@@ -42,6 +42,11 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -75,10 +80,12 @@ fun Tile(
     border: Boolean = true,
     focusRequester: FocusRequester? = null,
     onFocus: () -> Unit = {},
+    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
     content: @Composable BoxScope.(focused: Boolean) -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
+    var longFired by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (focused) focusedScale else 1f, label = "tileScale")
     val interaction = remember { MutableInteractionSource() }
     Box(
@@ -90,6 +97,19 @@ fun Tile(
                 val f = it.isFocused
                 if (f && !focused) onFocus()
                 focused = f
+            }
+            .onPreviewKeyEvent { e ->
+                // Holding OK opens the long-press action instead of clicking.
+                if (onLongClick == null) return@onPreviewKeyEvent false
+                val ok = e.key == Key.DirectionCenter || e.key == Key.Enter || e.key == Key.NumPadEnter
+                if (!ok) return@onPreviewKeyEvent false
+                val repeat = e.nativeKeyEvent.repeatCount
+                when {
+                    e.type == KeyEventType.KeyDown && repeat == 1 -> { longFired = true; onLongClick(); true }
+                    e.type == KeyEventType.KeyDown && repeat > 1 -> true
+                    e.type == KeyEventType.KeyUp && longFired -> { longFired = false; true }
+                    else -> false
+                }
             }
             .clip(shape)
             .then(if (focused && border) Modifier.border(3.dp, Color.White, shape) else Modifier)
@@ -112,12 +132,14 @@ fun PosterCard(
     width: Dp,
     focusRequester: FocusRequester? = null,
     onFocus: () -> Unit = {},
+    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     Tile(
         modifier = Modifier.width(width).aspectRatio(2f / 3f),
         focusRequester = focusRequester,
         onFocus = onFocus,
+        onLongClick = onLongClick,
         onClick = onClick,
     ) {
         Box(Modifier.fillMaxSize().background(C.Surface))
@@ -273,21 +295,64 @@ class PivotSpec(private val leadingPx: Float) : BringIntoViewSpec {
         offset - leadingPx
 }
 
-private fun icon(name: String, path: String): ImageVector =
+fun vectorIcon(name: String, path: String): ImageVector =
     ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f)
         .addPath(pathData = addPathNodes(path), fill = SolidColor(Color.White))
         .build()
 
 val MovieIcon: ImageVector by lazy {
-    icon(
+    vectorIcon(
         "movie",
         "M18,4l2,4h-3l-2,-4h-2l2,4h-3l-2,-4H8l2,4H7L5,4H4c-1.1,0 -1.99,0.9 -1.99,2L2,18c0,1.1 0.9,2 2,2h16c1.1,0 2,-0.9 2,-2V4h-4z",
     )
 }
 
 val TvIcon: ImageVector by lazy {
-    icon(
+    vectorIcon(
         "tv",
         "M21,3H3c-1.1,0 -2,0.9 -2,2v12c0,1.1 0.9,2 2,2h5v2h8v-2h5c1.1,0 1.99,-0.9 1.99,-2L23,5c0,-1.1 -0.9,-2 -2,-2zM21,17H3V5h18v12z",
     )
+}
+
+object PlayerIcons {
+    val Pause by lazy { vectorIcon("pause", "M6,19h4V5H6v14zm8,-14v14h4V5h-4z") }
+    val Play by lazy { vectorIcon("play", "M8,5v14l11,-7z") }
+    val Replay by lazy {
+        vectorIcon("replay", "M12,5V1L7,6l5,5V7c3.31,0 6,2.69 6,6s-2.69,6 -6,6 -6,-2.69 -6,-6H4c0,4.42 3.58,8 8,8s8,-3.58 8,-8 -3.58,-8 -8,-8z")
+    }
+    val Forward by lazy {
+        vectorIcon("forward", "M12,5V1l5,5 -5,5V7c-3.31,0 -6,2.69 -6,6s2.69,6 6,6 6,-2.69 6,-6h2c0,4.42 -3.58,8 -8,8s-8,-3.58 -8,-8 3.58,-8 8,-8z")
+    }
+    val Subtitles by lazy {
+        vectorIcon(
+            "cc",
+            "M19,4H5c-1.11,0 -2,0.9 -2,2v12c0,1.1 0.89,2 2,2h14c1.1,0 2,-0.9 2,-2V6c0,-1.1 -0.9,-2 -2,-2zM11,11H9.5v-0.5h-2v3h2V13H11v1c0,0.55 -0.45,1 -1,1H7c-0.55,0 -1,-0.45 -1,-1v-4c0,-0.55 0.45,-1 1,-1h3c0.55,0 1,0.45 1,1v1zM18,11h-1.5v-0.5h-2v3h2V13H18v1c0,0.55 -0.45,1 -1,1h-3c-0.55,0 -1,-0.45 -1,-1v-4c0,-0.55 0.45,-1 1,-1h3c0.55,0 1,0.45 1,1v1z",
+        )
+    }
+    val Speed by lazy {
+        vectorIcon(
+            "speed",
+            "M20.38,8.57l-1.23,1.85a8,8 0,0 1,-0.22 7.58H5.07A8,8 0,0 1,15.58 6.85l1.85,-1.23A10,10 0,0 0,3.35 19a2,2 0,0 0,1.72 1h13.85a2,2 0,0 0,1.74 -1,10 10,0 0,0 -0.27,-10.44zM10.59,15.41a2,2 0,0 0,2.83 0l5.66,-8.49 -8.49,5.66a2,2 0,0 0,0 2.83z",
+        )
+    }
+    val Episodes by lazy {
+        vectorIcon(
+            "episodes",
+            "M4,6H2v14c0,1.1 0.9,2 2,2h14v-2H4V6zM20,2H8c-1.1,0 -2,0.9 -2,2v12c0,1.1 0.9,2 2,2h12c1.1,0 2,-0.9 2,-2V4c0,-1.1 -0.9,-2 -2,-2zM12,14.5v-9l6,4.5 -6,4.5z",
+        )
+    }
+    val Picture by lazy {
+        vectorIcon(
+            "aspect",
+            "M19,12h-2v3h-3v2h5v-5zM7,9h3V7H5v5h2V9zM21,3H3c-1.1,0 -2,0.9 -2,2v14c0,1.1 0.9,2 2,2h18c1.1,0 2,-0.9 2,-2V5c0,-1.1 -0.9,-2 -2,-2zM21,19.01H3V4.99h18v14.02z",
+        )
+    }
+    val Next by lazy { vectorIcon("next", "M6,18l8.5,-6L6,6v12zM16,6v12h2V6h-2z") }
+    val Check by lazy { vectorIcon("check", "M9,16.17L4.83,12l-1.42,1.41L9,19 21,7l-1.41,-1.41z") }
+    val Trailer by lazy {
+        vectorIcon("trailer", "M18,4l2,4h-3l-2,-4h-2l2,4h-3l-2,-4H8l2,4H7L5,4H4c-1.1,0 -1.99,0.9 -1.99,2L2,18c0,1.1 0.9,2 2,2h16c1.1,0 2,-0.9 2,-2V4h-4z")
+    }
+    val Restart by lazy {
+        vectorIcon("restart", "M12,5V1L7,6l5,5V7c3.31,0 6,2.69 6,6s-2.69,6 -6,6 -6,-2.69 -6,-6H4c0,4.42 3.58,8 8,8s8,-3.58 8,-8 -3.58,-8 -8,-8z")
+    }
 }

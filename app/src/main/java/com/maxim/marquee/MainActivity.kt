@@ -1,6 +1,8 @@
 package com.maxim.marquee
 
+import android.os.Build
 import android.os.Bundle
+import android.view.Display
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -19,6 +21,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import com.maxim.marquee.ui.C
+import com.maxim.marquee.ui.CardMenuOverlay
 import com.maxim.marquee.ui.DetailScreen
 import com.maxim.marquee.ui.LoadingOverlay
 import com.maxim.marquee.ui.LoginScreen
@@ -32,9 +35,20 @@ class MainActivity : ComponentActivity() {
         model.onPlayerResult(res.data)
     }
 
+    val voiceLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        model.onVoiceResult(res.data)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         model = AppModel(this)
+        model.supportsDV = try {
+            @Suppress("DEPRECATION")
+            val caps = if (Build.VERSION.SDK_INT >= 24) windowManager.defaultDisplay.hdrCapabilities else null
+            caps?.supportedHdrTypes?.contains(Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION) == true
+        } catch (e: Exception) {
+            false
+        }
         setContent { AppRoot(model) { finish() } }
         model.start()
     }
@@ -81,6 +95,10 @@ fun AppRoot(model: AppModel, exit: () -> Unit) {
                         else -> exit()
                     }
                 }
+            }
+            if (model.cardMenu != null) {
+                CardMenuOverlay(model)
+                BackHandler { model.closeCardMenu() }
             }
             model.loading?.let { req ->
                 LoadingOverlay(req)

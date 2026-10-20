@@ -166,24 +166,104 @@ object Repo {
     /**
      * Writes playback progress back to the Stremio library so Continue Watching matches
      * on every device. Only updates items that already exist, and only the progress fields,
-     * so nothing else in the library can be disturbed.
+     * following the same rules Stremio's own player uses:
+     * - finished movie: marked watched, progress cleared
+     * - finished episode: Continue Watching moves on to the next episode ("Up Next")
      */
-    suspend fun syncProgress(type: String, metaId: String, videoId: String, pos: Long, dur: Long, finished: Boolean) {
+    suspend fun syncProgress(
+        type: String, metaId: String, videoId: String, pos: Long, dur: Long, finished: Boolean,
+        nextVideoId: String? = null,
+    ) {
         val key = Store.authKey ?: return
         safe {
             val item = StremioApi.libraryItem(key, metaId) ?: return
             val state = item.obj("state") ?: return
             val now = isoNow()
-            state.put("timeOffset", if (finished) 0L else pos)
-            state.put("duration", dur)
-            state.put("video_id", videoId)
             state.put("lastWatched", now)
-            if (finished && type == "movie") {
-                state.put("flaggedWatched", 1)
+            state.put("duration", dur)
+            if (!finished) {
+                state.put("timeOffset", pos)
+                state.put("video_id", videoId)
+            } else {
                 state.put("timesWatched", (state.long("timesWatched") ?: 0) + 1)
+                if (type == "series" && nextVideoId != null) {
+                    state.put("overallTimeWatched", (state.long("overallTimeWatched") ?: 0) + (state.long("timeWatched") ?: 0))
+                    state.put("timeWatched", 0L)
+                    state.put("flaggedWatched", 0)
+                    state.put("video_id", nextVideoId)
+                    state.put("timeOffset", 1L)
+                } else {
+                    state.put("video_id", videoId)
+                    state.put("timeOffset", 0L)
+                    if (type == "movie") state.put("flaggedWatched", 1)
+                }
             }
             item.put("_mtime", now)
             StremioApi.putLibraryItem(key, item)
         }
+    }
+
+    /** Removes a title from Continue Watching everywhere (Stremio's "rewind"). */
+    suspend fun rewind(metaId: String) {
+        val key = Store.authKey ?: return
+        safe {
+            val item = StremioApi.libraryItem(key, metaId) ?: return
+            item.obj("state")?.put("timeOffset", 0L) ?: return
+            item.put("_mtime", isoNow())
+            StremioApi.putLibraryItem(key, item)
+        }
+    }
+
+    /** Add to / remove from My List (the Stremio library), exactly like Stremio does it. */
+    suspend fun setInLibrary(meta: MetaItem, add: Boolean): Boolean {
+        val key = Store.authKey ?: return false
+        return safe {
+            val now = isoNow()
+            val existing = StremioApi.libraryItem(key, meta.id)
+            val item = if (existing != null) {
+                existing.put("removed", !add).put("temp", false).put("_mtime", now)
+            } else {
+                if (!add) return true
+                JSONObject()
+                    .put("_id", meta.id).put("name", meta.name).put("type", meta.type)
+                    .put("poster", meta.poster ?: JSONObject.NULL).put("posterShape", "poster")
+                    .put("removed", false).put("temp", false)
+                    .put("_ctime", now).put("_mtime", now)
+                    .put(
+                        "state",
+                        JSONObject()
+                            .put("lastWatched", now).put("timeWatched", 0L).put("timeOffset", 0L)
+                            .put("overallTimeWatched", 0L).put("timesWatched", 0).put("flaggedWatched", 0)
+                            .put("duration", 0L).put("video_id", JSONObject.NULL).put("watched", JSONObject.NULL)
+                            .put("noNotif", false),
+                    )
+                    .put(
+                        "behaviorHints",
+                        JSONObject().put("defaultVideoId", meta.defaultVideoId ?: JSONObject.NULL)
+                            .put("featuredVideoId", JSONObject.NULL).put("hasScheduledVideos", false),
+                    )
+            }
+            StremioApi.putLibraryItem(key, item)
+            true
+        } ?: false
+    }
+
+    data class Segment(val startMs: Long, val endMs: Long)
+    data class Segments(val intro: Segment?, val recap: Segment?, val outro: Segment?)
+
+    /** Intro / recap / credits timestamps from IntroDB (community data, no key needed). */
+    suspend fun segments(videoId: String): Segments? {
+        val p = videoId.split(":")
+        if (p.size < 3 || !p[0].startsWith("tt")) return null
+        val season = p[p.size - 2].toIntOrNull() ?: return null
+        val episode = p[p.size - 1].toIntOrNull() ?: return null
+        val o = Http.getJson("https://api.introdb.app/segments?imdb_id=${p[0]}&season=$season&episode=$episode") ?: return null
+        fun seg(k: String): Segment? {
+            val s = o.obj(k) ?: return null
+            val start = s.long("start_ms") ?: s.long("start_sec")?.times(1000) ?: return null
+            val end = s.long("end_ms") ?: s.long("end_sec")?.times(1000) ?: return null
+            return if (end > start) Segment(start, end) else null
+        }
+        return Segments(seg("intro"), seg("recap"), seg("outro"))
     }
 }

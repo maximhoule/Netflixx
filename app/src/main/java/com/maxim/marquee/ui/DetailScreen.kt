@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -105,6 +106,18 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
                     icon = Icons.Filled.PlayArrow,
                     focusRequester = playFr,
                     onClick = { model.play(req) },
+                )
+                if (progress != null) {
+                    ActionButton(text = "Start Over", icon = PlayerIcons.Restart, onClick = { model.play(req.copy(startOver = true)) })
+                }
+                meta.trailer?.let { yt ->
+                    ActionButton(text = "Trailer", icon = PlayerIcons.Trailer, onClick = { model.playTrailer(yt) })
+                }
+                val inList = model.inMyList(meta.id)
+                ActionButton(
+                    text = "My List",
+                    icon = if (inList) PlayerIcons.Check else Icons.Filled.Add,
+                    onClick = { model.toggleMyList(meta) },
                 )
                 ActionButton(
                     text = "Sources",

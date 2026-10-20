@@ -134,6 +134,11 @@ object Repo {
         c.type.lowercase() in setOf("tv", "channel", "channels", "events", "event", "sports", "sport", "live") ||
             SPORTS.containsMatchIn(c.name) || SPORTS.containsMatchIn(c.id) || SPORTS.containsMatchIn(a.name)
 
+    private val RECAP = Regex("recap|highlight|replay|full match|condensed|re-?watch|vod", RegexOption.IGNORE_CASE)
+
+    /** Recaps and highlights of past games (not live). */
+    fun isRecap(c: Catalog): Boolean = RECAP.containsMatchIn(c.name) || RECAP.containsMatchIn(c.id)
+
     /** Catalogs that show on the board without needing a search term or genre. */
     fun boardCatalogs(type: String?): List<Pair<Addon, Catalog>> =
         addons.flatMap { a ->

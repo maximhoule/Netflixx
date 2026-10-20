@@ -202,6 +202,16 @@ object Store {
         get() = prefs.getInt("trailerMode", 1)
         set(v) = prefs.edit().putInt("trailerMode", v).apply()
 
+    /** Row titles you chose to hide (lower case). */
+    var hiddenRows: Set<String>
+        get() = safe { org.json.JSONArray(string("hiddenRows") ?: "[]").strings().toSet() } ?: emptySet()
+        set(v) = setString("hiddenRows", org.json.JSONArray(v.toList()).toString())
+
+    /** Sports recap / highlight rows (hidden unless turned on). */
+    var showRecaps: Boolean
+        get() = bool("showRecaps", false)
+        set(v) = setBool("showRecaps", v)
+
     /** Send Dolby / DTS audio untouched to the TV or soundbar when it supports it (otherwise decoded here). */
     var passthrough: Boolean
         get() = bool("passthrough", true)

@@ -238,6 +238,9 @@ fun CardMenuOverlay(model: AppModel) {
                 }
             }
             if (m.fromContinue) options += "Remove from Continue Watching" to { model.dismissContinue(m.item); model.closeCardMenu() }
+            m.rowTitle?.takeIf { !m.fromContinue }?.let { title ->
+                options += "Hide the \"$title\" row" to { model.closeCardMenu(); model.hideRow(title) }
+            }
             options.forEachIndexed { i, (label, action) ->
                 Tile(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
@@ -485,6 +488,13 @@ fun SettingsScreen(model: AppModel) {
             "Plays the trailer behind the billboard when you rest on a title",
         ) {
             Store.trailerMode = (Store.trailerMode + 1) % 3; version++
+        }
+        val hiddenCount = Store.hiddenRows.size
+        if (hiddenCount > 0) {
+            SettingRow("Hidden rows", "$hiddenCount hidden", "Select to show them all again") { model.showHiddenRows(); version++ }
+        }
+        SettingRow("Sports recaps & highlights", if (Store.showRecaps) "Shown" else "Hidden", "Replays of past games in your sports rows") {
+            model.setShowRecaps(!Store.showRecaps); version++
         }
         SettingRow("Expanding cards", onOff(Store.expandCards), "Posters widen into a preview when you rest on them") {
             Store.expandCards = !Store.expandCards; version++

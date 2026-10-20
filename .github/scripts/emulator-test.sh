@@ -111,6 +111,13 @@ measure_end player_ui
 adb shell dumpsys meminfo $PKG | grep -E "TOTAL PSS|TOTAL:|Java Heap|Native Heap|Graphics" | head -6 | sed 's/^/player memory: /' | tee -a "$OUT/summary.txt"
 key BACK; sleep 1; key BACK; sleep 3; shot after_player
 
+summary "== hide a row from the long-press menu"
+tab 2; sleep 3; key DPAD_DOWN; sleep 2
+adb shell input keyevent --longpress DPAD_CENTER; sleep 2; shot long_press_menu_hide
+key DPAD_DOWN DPAD_DOWN DPAD_CENTER; sleep 3; shot row_hidden
+tab 3; sleep 3; shot sports_after_hide
+tab 7; sleep 2; fast DPAD_DOWN 14; sleep 1; shot settings_hidden_rows
+
 adb logcat -d > "$OUT/logcat_first_run.txt"
 grep -E "Choreographer.*Skipped [0-9]+ frames" "$OUT/logcat_first_run.txt" | head -10 | sed 's/^/first run skipped: /' | tee -a "$OUT/summary.txt"
 adb logcat -c

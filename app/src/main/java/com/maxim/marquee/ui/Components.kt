@@ -209,7 +209,13 @@ fun PosterCard(
             }
         }
     }
-    val w by animateDpAsState(if (expanded) h * 16f / 9f else baseW, tween(230, easing = FastOutSlowInEasing), label = "cardWidth")
+    // Opens smoothly, closes instantly: a row sliding back while the screen scrolls looks sluggish.
+    val open = expanded && focused
+    val w by animateDpAsState(
+        if (open) h * 16f / 9f else baseW,
+        if (open) tween(230, easing = FastOutSlowInEasing) else androidx.compose.animation.core.snap(),
+        label = "cardWidth",
+    )
     Tile(
         modifier = Modifier.width(w).height(h),
         focusedScale = if (canExpand) 1.05f else 1.08f,
@@ -246,10 +252,10 @@ fun PosterCard(
                 modifier = Modifier.width(baseW).fillMaxHeight(),
             )
         }
-        if (canExpand && (expanded || w > baseW + 1.dp)) {
+        if (canExpand && (open || w > baseW + 1.dp)) {
             ExpandedPreview(item, Modifier.fillMaxSize().graphicsLayer { alpha = ((w - baseW) / (h * 16f / 9f - baseW)).coerceIn(0f, 1f) })
         }
-        if (!expanded) {
+        if (!open) {
             item.badge?.let {
                 Text(
                     it,
@@ -625,11 +631,21 @@ fun Centered(text: String, sub: String? = null) {
     }
 }
 
+/** Set while a direction key is being held down (auto-repeat). */
+object Nav {
+    @Volatile
+    var keyHeld = false
+}
+
 /** Keeps the focused item pinned at a fixed offset from the start of a list (Netflix-style rows). */
 @OptIn(ExperimentalFoundationApi::class)
 class PivotSpec(private val leadingPx: Float) : BringIntoViewSpec {
-    // Short, decisive scroll (the default spring feels floaty with a remote).
-    override val scrollAnimationSpec: AnimationSpec<Float> = tween(170, easing = FastOutSlowInEasing)
+    // Short, decisive scroll; while a direction key is held the list jumps instead of animating,
+    // so it keeps up with the remote instead of trailing behind it.
+    override val scrollAnimationSpec: AnimationSpec<Float>
+        get() = if (Nav.keyHeld) androidx.compose.animation.core.snap() else QUICK
+
+    private val QUICK: AnimationSpec<Float> = tween(130, easing = FastOutSlowInEasing)
 
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
         offset - leadingPx

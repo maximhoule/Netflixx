@@ -71,7 +71,7 @@ data class PlayReq(
     val startOver: Boolean = false,
 )
 
-data class CardMenu(val item: CardItem, val browse: BrowseState?, val fromContinue: Boolean)
+data class CardMenu(val item: CardItem, val browse: BrowseState?, val fromContinue: Boolean, val rowTitle: String? = null)
 
 sealed class Screen {
     data class Detail(val type: String, val id: String, val preview: MetaItem) : Screen()
@@ -477,8 +477,12 @@ class AppModel(private val activity: MainActivity) {
                 }
             }
             // Sports and live TV straight after Continue Watching on Home (and on their own tab).
+            val hidden = Store.hiddenRows
+            val recaps = Store.showRecaps
+            fun shown(a: com.maxim.marquee.data.Addon, c: Catalog) =
+                (recaps || !Repo.isRecap(c)) && rowTitle(c).lowercase() !in hidden
             val sportsRows = Repo.boardCatalogs(null)
-                .filter { (a, c) -> Repo.isSports(a, c) }
+                .filter { (a, c) -> Repo.isSports(a, c) && shown(a, c) }
                 .groupBy { (_, c) -> rowTitle(c).lowercase() }
                 .values
                 .mapIndexed { i, group ->
@@ -505,8 +509,8 @@ class AppModel(private val activity: MainActivity) {
             }
             // Rows with the same name from different addons (e.g. two "Popular Movies") become one row.
             val catalogRows = Repo.boardCatalogs(b.type)
-                // Already near the top of Home.
-                .filterNot { (a, c) -> b.withContinue && Repo.isSports(a, c) }
+                // Sports are already near the top of Home; hidden rows and recaps stay hidden.
+                .filter { (a, c) -> shown(a, c) && !(b.withContinue && Repo.isSports(a, c)) }
                 .groupBy { (_, c) -> rowTitle(c).lowercase() }
                 .values
                 .mapIndexed { i, group ->
@@ -527,7 +531,7 @@ class AppModel(private val activity: MainActivity) {
                 else -> catalogRows.add(minOf(1, catalogRows.size), top10Row(b.type))
             }
             if (Repo.addons.isNotEmpty()) defs += catalogRows
-            b.reset(defs)
+            b.reset(defs.filter { it.title.lowercase() !in hidden || it.source is RowSource.Continue })
             b.signature = sig
             if (b.withContinue) {
                 b.rowItems["continue"] = continueItems()
@@ -600,7 +604,9 @@ class AppModel(private val activity: MainActivity) {
                         if (preloadPosters) preloadPosters(cached)
                     }
                     // 2. Fresh copy from the addon. Swapped in unless you're browsing that row right now.
-                    val fresh = parts.map { (a, c) -> async { Repo.catalog(a, c) } }.awaitAll()
+                    // A slow addon gets 20 seconds; after that the row gives up instead of loading forever.
+                    val requests = parts.map { (a, c) -> AppScope.async { Repo.catalog(a, c) } }
+                    val fresh = requests.map { d -> withTimeoutOrNull(20_000) { d.await() } ?: emptyList() }
                         .flatten().distinctBy { it.id }
                     val browsingRow = b.lastFocusKey?.startsWith(row.key + "#") == true
                     if (fresh.isNotEmpty() && fresh.map { it.id } != cached.map { it.id } && (cached.isEmpty() || !browsingRow)) {
@@ -692,6 +698,8 @@ class AppModel(private val activity: MainActivity) {
 
     fun onCardFocus(b: BrowseState, key: String, item: CardItem) {
         b.lastFocusKey = key
+        // Moving on: the trailer stops at once, so it doesn't play (and cost frames) during the scroll.
+        if (b.hero?.meta?.id != item.meta.id) stopTrailer()
         heroDebounce?.cancel()
         heroDebounce = scope.launch {
             delay(140)
@@ -1236,10 +1244,34 @@ class AppModel(private val activity: MainActivity) {
         scope.launch { Repo.rewind(item.meta.id) }
     }
 
-    fun openCardMenu(b: BrowseState?, item: CardItem, fromContinue: Boolean) {
+    fun openCardMenu(b: BrowseState?, item: CardItem, fromContinue: Boolean, rowTitle: String? = null) {
         // If OK is still held, its release must not "click" the menu's first option.
         activity.swallowOkUp = activity.okHeld
-        cardMenu = CardMenu(item, b, fromContinue)
+        cardMenu = CardMenu(item, b, fromContinue, rowTitle)
+    }
+
+    /** "Hide this row": gone from every page now and next time (undo in Settings). */
+    fun hideRow(title: String) {
+        Store.hiddenRows = Store.hiddenRows + title.lowercase()
+        browse.values.forEach { b ->
+            val i = b.rows.indexOfFirst { it.title.equals(title, true) }
+            if (i >= 0) {
+                b.rows.removeAt(i)
+                b.lastFocusKey = null
+                b.pendingFocusKey = b.firstKey()
+            }
+        }
+        toast("Row hidden · Settings → Hidden rows to bring it back")
+    }
+
+    fun showHiddenRows() {
+        Store.hiddenRows = emptySet()
+        rebuildRows(force = true)
+    }
+
+    fun setShowRecaps(on: Boolean) {
+        Store.showRecaps = on
+        rebuildRows(force = true)
     }
 
     fun closeCardMenu() {

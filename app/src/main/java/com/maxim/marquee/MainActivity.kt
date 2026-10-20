@@ -108,6 +108,11 @@ class MainActivity : ComponentActivity() {
     var swallowOkUp = false
 
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        when (event.keyCode) {
+            android.view.KeyEvent.KEYCODE_DPAD_UP, android.view.KeyEvent.KEYCODE_DPAD_DOWN,
+            android.view.KeyEvent.KEYCODE_DPAD_LEFT, android.view.KeyEvent.KEYCODE_DPAD_RIGHT ->
+                com.maxim.marquee.ui.Nav.keyHeld = event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount > 0
+        }
         val ok = event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
             event.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
             event.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER

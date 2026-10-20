@@ -188,6 +188,14 @@ fun BrowseScreen(model: AppModel, b: BrowseState) {
             val err = model.addonError
             if (err != null && !hasCatalogs) {
                 Box(Modifier.fillMaxWidth().weight(1f)) { AddonErrorPanel(model, err) }
+            } else if (b.rows.isNotEmpty() && b.rows.all { b.loaded[it.key] == true && b.rowItems[it.key].isNullOrEmpty() }) {
+                // Everything answered, nothing to show (e.g. no games on right now).
+                Box(Modifier.fillMaxWidth().weight(1f)) {
+                    Centered(
+                        if (b.sportsOnly) "No games right now" else "Nothing to show yet",
+                        if (b.sportsOnly) "Your sports addons didn't list any events. Check back closer to game time." else null,
+                    )
+                }
             } else if (!hasCatalogs && b.rowItems["continue"].isNullOrEmpty()) {
                 Box(Modifier.fillMaxWidth().weight(1f)) {
                     if (model.syncing) {
@@ -292,7 +300,9 @@ fun CatalogRow(
     val declared = remember(items) {
         items?.mapNotNull { CardShape.of(it.meta.posterShape) }?.groupingBy { it }?.eachCount()?.maxByOrNull { it.value }?.key
     }
-    val rowShape = declared ?: detected ?: CardShape.POSTER
+    // Live TV / sports catalogs are nearly always wide thumbnails: start their placeholders wide too.
+    val guess = (row.source as? RowSource.Cat)?.catalog?.type?.let { if (it == "movie" || it == "series") null else CardShape.LANDSCAPE }
+    val rowShape = declared ?: detected ?: guess ?: CardShape.POSTER
     val expandCards = Store.expandCards
 
     Column(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
@@ -340,7 +350,7 @@ fun CatalogRow(
                                 item = item,
                                 focusRequester = fr,
                                 onFocus = { model.onCardFocus(b, key, item) },
-                                onLongClick = { model.openCardMenu(b, item, false) },
+                                onLongClick = { model.openCardMenu(b, item, false, row.title) },
                                 onClick = onCardClick,
                             )
                             return@itemsIndexed
@@ -361,7 +371,7 @@ fun CatalogRow(
                                 model.onCardFocus(b, key, item)
                                 if (i >= items.size - 6) model.loadMore(b, row)
                             },
-                            onLongClick = { model.openCardMenu(b, item, row.source is RowSource.Continue) },
+                            onLongClick = { model.openCardMenu(b, item, row.source is RowSource.Continue, row.title) },
                             onClick = onCardClick,
                         )
                     }

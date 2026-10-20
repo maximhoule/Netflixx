@@ -683,7 +683,10 @@ fun LoginScreen(model: AppModel) {
     var error by remember { mutableStateOf<String?>(null) }
     val focus = LocalFocusManager.current
     val emailFr = remember { FocusRequester() }
-    LaunchedEffect(Unit) { withFrameNanos { }; tryFocus(emailFr) }
+    // Start on the Sign in button, not the email box: focusing a text box pops the keyboard
+    // up over half the screen (and over the QR code).
+    val signInFr = remember { FocusRequester() }
+    LaunchedEffect(Unit) { withFrameNanos { }; tryFocus(signInFr) }
 
     fun submit() {
         if (busy || email.isBlank() || password.isEmpty()) return
@@ -698,49 +701,58 @@ fun LoginScreen(model: AppModel) {
     )
 
     val setupUrl = rememberPhoneSetup(model)
-    Row(Modifier.fillMaxSize().background(C.Bg).padding(56.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f).padding(end = 40.dp)) {
-            Text("MARQUEE", color = C.Red, fontSize = 52.sp, fontWeight = FontWeight.Black)
-            Spacer(Modifier.height(16.dp))
-            Text(
-                if (model.profiles.size > 1) "${Store.activeProfile.name}: sign in with a Stremio account" else "Sign in with your Stremio account",
-                color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(10.dp))
-            Text(
-                "Your addons (Duck Streams included), library, Continue Watching and progress load automatically. Nothing to set up here.",
-                color = C.Dim, fontSize = 16.sp, lineHeight = 22.sp,
-            )
-        }
-        Column(Modifier.width(400.dp)) {
-            OutlinedTextField(
-                value = email, onValueChange = { email = it }, singleLine = true,
-                label = { Text("Stremio email") }, colors = fieldColors,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
-                keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Down) }),
-                modifier = Modifier.fillMaxWidth().focusRequester(emailFr),
-            )
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = password, onValueChange = { password = it }, singleLine = true,
-                label = { Text("Password") }, colors = fieldColors,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { focus.moveFocus(FocusDirection.Down) }),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(20.dp))
-            ActionButton(if (busy) "Signing in…" else "Sign in", modifier = Modifier.fillMaxWidth(), onClick = { submit() })
-            if (model.profiles.size > 1) {
-                Spacer(Modifier.height(10.dp))
-                ActionButton("Switch profile", modifier = Modifier.fillMaxWidth(), onClick = { model.openProfiles() })
-            }
-            error?.let {
+    // TV screens are wide but short: title on top, then the form and the QR code side by side.
+    Column(
+        Modifier.fillMaxSize().background(C.Bg).padding(horizontal = 64.dp, vertical = 40.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text("MARQUEE", color = C.Red, fontSize = 44.sp, fontWeight = FontWeight.Black, maxLines = 1)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            if (model.profiles.size > 1) "${Store.activeProfile.name}: sign in with a Stremio account" else "Sign in with your Stremio account",
+            color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            "Your addons (Duck Streams included), library, Continue Watching and progress load automatically.",
+            color = C.Dim, fontSize = 16.sp, lineHeight = 22.sp,
+        )
+        Spacer(Modifier.height(28.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.width(400.dp)) {
+                OutlinedTextField(
+                    value = email, onValueChange = { email = it }, singleLine = true,
+                    label = { Text("Stremio email") }, colors = fieldColors,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Down) }),
+                    modifier = Modifier.fillMaxWidth().focusRequester(emailFr),
+                )
                 Spacer(Modifier.height(12.dp))
-                Text(it, color = C.Red, fontSize = 15.sp)
+                OutlinedTextField(
+                    value = password, onValueChange = { password = it }, singleLine = true,
+                    label = { Text("Password") }, colors = fieldColors,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { focus.moveFocus(FocusDirection.Down) }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(18.dp))
+                ActionButton(
+                    if (busy) "Signing in…" else "Sign in", modifier = Modifier.fillMaxWidth(), focusRequester = signInFr,
+                    onClick = { if (email.isBlank() || password.isEmpty()) tryFocus(emailFr) else submit() },
+                )
+                if (model.profiles.size > 1) {
+                    Spacer(Modifier.height(10.dp))
+                    ActionButton("Switch profile", modifier = Modifier.fillMaxWidth(), onClick = { model.openProfiles() })
+                }
+                error?.let {
+                    Spacer(Modifier.height(10.dp))
+                    Text(it, color = C.Red, fontSize = 15.sp)
+                }
             }
+            Spacer(Modifier.width(56.dp))
+            Text("or", color = C.Dim, fontSize = 20.sp)
+            Spacer(Modifier.width(56.dp))
+            PhoneSetupPanel(setupUrl, "Sign in from your phone")
         }
-        Spacer(Modifier.width(40.dp))
-        PhoneSetupPanel(setupUrl, "Or sign in from your phone")
     }
 }

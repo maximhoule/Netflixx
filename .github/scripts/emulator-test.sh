@@ -109,7 +109,7 @@ key DPAD_RIGHT DPAD_UP DPAD_UP DPAD_DOWN DPAD_CENTER; sleep 4; shot addon_sub_se
 key BACK; sleep 1; key BACK; sleep 3; shot subtitle_on_video
 measure_end player_ui
 adb shell dumpsys meminfo $PKG | grep -E "TOTAL PSS|TOTAL:|Java Heap|Native Heap|Graphics" | head -6 | sed 's/^/player memory: /' | tee -a "$OUT/summary.txt"
-key BACK; sleep 1; key BACK; sleep 3; shot after_player
+key BACK; sleep 3; shot after_player
 
 summary "== hide a row from the long-press menu"
 tab 2; sleep 3; key DPAD_DOWN; sleep 2

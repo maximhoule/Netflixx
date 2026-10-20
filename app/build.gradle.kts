@@ -82,6 +82,7 @@ dependencies {
     val media3 = "1.5.0"
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-exoplayer-hls:$media3")
+    implementation("androidx.media3:media3-exoplayer-dash:$media3")
     implementation("androidx.media3:media3-ui:$media3")
     // Software decoders for DTS / TrueHD / E-AC3 audio that most TV boxes can't decode natively.
     // Must match the media3 version above (Jellyfin publishes one build per media3 release).

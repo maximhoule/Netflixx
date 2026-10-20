@@ -60,6 +60,11 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
     val progress = remember(req, tick, model.library) { model.progressFor(meta.id, req.videoId) }
     var season by remember(s, seasons) { mutableStateOf(target?.season ?: seasons.firstOrNull() ?: 1) }
 
+    LaunchedEffect(req.videoId) {
+        kotlinx.coroutines.delay(500)
+        model.prefetch(req.type, req.videoId)
+    }
+
     val playFr = remember { FocusRequester() }
     LaunchedEffect(s) {
         withFrameNanos { }

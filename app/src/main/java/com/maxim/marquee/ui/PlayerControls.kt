@@ -91,6 +91,7 @@ class PlayerUiState {
     var focusTick by mutableIntStateOf(0)
     var settingsTick by mutableIntStateOf(0)
     var seekFlash by mutableStateOf<String?>(null)
+    var live by mutableStateOf(false)
 }
 
 interface PlayerHost {
@@ -290,7 +291,14 @@ private fun Controls(host: PlayerHost, ui: PlayerUiState) {
                 Spacer(Modifier.width(16.dp))
                 SeekBar(host, ui, Modifier.weight(1f))
                 Spacer(Modifier.width(16.dp))
-                Text("-" + formatTime(ui.duration - ui.position), color = Color.White, fontSize = 15.sp)
+                if (ui.live) {
+                    Text(
+                        "LIVE", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.background(C.Red, RoundedCornerShape(3.dp)).padding(horizontal = 8.dp, vertical = 3.dp),
+                    )
+                } else {
+                    Text("-" + formatTime(ui.duration - ui.position), color = Color.White, fontSize = 15.sp)
+                }
             }
             Spacer(Modifier.height(20.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {

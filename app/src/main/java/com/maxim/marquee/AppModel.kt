@@ -805,7 +805,11 @@ class AppModel(private val activity: MainActivity) {
         val hidden = Store.continueHidden
         return byId.values
             // Taken off by hand: stays off until you watch it again.
-            .filter { c -> (hidden[c.metaId] ?: -1) < c.time }
+            .filter { c -> maxOf(hidden[c.metaId] ?: -1, hidden[nameKey(c.type, c.name)] ?: -1) < c.time }
+            // The same show from Stremio and from your Emby server (when the server doesn't know its
+            // IMDb id, the two can't be matched by id): keep only the most recent one.
+            .groupBy { nameKey(it.type, it.name) }
+            .map { (_, same) -> same.maxBy { it.time } }
             .sortedByDescending { it.time }
             .take(50)
             .map { c ->
@@ -1255,10 +1259,19 @@ class AppModel(private val activity: MainActivity) {
         }
     }
 
+    /** A title's name, simplified, so "The Office (US)" from one source matches "The Office" from another. */
+    private fun nameKey(type: String, name: String): String =
+        "name:" + (if (type == "movie") "movie" else "series") + "|" +
+            name.lowercase().replace(PARENS, "").replace(NON_WORD, "")
+
+    private val PARENS = Regex("\\([^)]*\\)")
+    private val NON_WORD = Regex("[^\\p{L}\\p{N}]+")
+
     fun dismissContinue(item: CardItem) {
         val id = item.meta.id
         Store.dismiss(id)
         Store.hideFromContinue(id)
+        Store.hideFromContinue(nameKey(item.meta.type, item.meta.name))
         library = library.map { if (it.id == id) it.copy(timeOffset = 0) else it }
         refreshContinue()
         toast("Removed from Continue Watching")
@@ -1275,6 +1288,7 @@ class AppModel(private val activity: MainActivity) {
         Store.dismiss(id)
         Store.markWatched(id)
         Store.hideFromContinue(id)
+        Store.hideFromContinue(nameKey(meta.type, meta.name))
         library = library.map { if (it.id == id) it.copy(timeOffset = 0) else it }
         refreshContinue()
         toast(if (meta.type == "series") "Marked the whole show as watched" else "Marked as watched")

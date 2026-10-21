@@ -281,6 +281,9 @@ private fun TrailerLayer(model: AppModel) {
             (video.parent as? ViewGroup)?.removeView(video)
             video
         },
+        // Hidden while no trailer shows, so the screen doesn't keep blending an empty full-screen
+        // video layer on every frame (that costs smoothness on TV boxes while you scroll).
+        update = { it.visibility = if (alpha > 0f) android.view.View.VISIBLE else android.view.View.INVISIBLE },
         modifier = Modifier.fillMaxSize().alpha(alpha),
     )
 }
@@ -306,7 +309,9 @@ fun CatalogRow(
     }
     // Live TV / sports catalogs are nearly always wide thumbnails: start their placeholders wide too.
     val guess = (row.source as? RowSource.Cat)?.catalog?.type?.let { if (it == "movie" || it == "series") null else CardShape.LANDSCAPE }
-    val rowShape = declared ?: detected ?: guess ?: CardShape.POSTER
+    // Continue Watching always uses posters (one wide card shouldn't stretch the whole row).
+    val rowShape = if (row.source is RowSource.Continue || row.source is RowSource.NewEpisodes) CardShape.POSTER
+    else declared ?: detected ?: guess ?: CardShape.POSTER
     val expandCards = Store.expandCards
 
     Column(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {

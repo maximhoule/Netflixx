@@ -315,7 +315,8 @@ object Emby {
             cast = o.arr("People").objects().filter { it.str("Type") == "Actor" }.mapNotNull { it.str("Name") },
             trailer = o.arr("RemoteTrailers").objects().firstNotNullOfOrNull { youtubeId(it.str("Url")) },
             trailers = o.arr("RemoteTrailers").objects().mapNotNull { youtubeId(it.str("Url")) }.distinct(),
-            posterShape = if (primaryAspect > 1.2) "landscape" else null,
+            // Episodes show their series' poster (see [poster]), so their own wide picture doesn't count.
+            posterShape = if (primaryAspect > 1.2 && !(isEp && o.str("SeriesPrimaryImageTag") != null)) "landscape" else null,
             defaultVideoId = if (appType(o) == "movie") PREFIX + id else null,
             certification = o.str("OfficialRating"),
             added = parseIso(o.str("DateCreated")),

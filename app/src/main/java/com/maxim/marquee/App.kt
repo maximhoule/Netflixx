@@ -24,7 +24,10 @@ class App : Application(), ImageLoaderFactory {
     }
 
     override fun newImageLoader(): ImageLoader = ImageLoader.Builder(this)
-        .crossfade(160)
+        .crossfade(120)
+        // Decode at most two pictures at once: on a 4-core TV box this leaves the other cores to
+        // the screen (scrolling stays smooth while a new row's posters come in).
+        .bitmapFactoryMaxParallelism(2)
         .allowRgb565(true)
         .respectCacheHeaders(false)
         .memoryCache { MemoryCache.Builder(this).maxSizePercent(0.2).build() }

@@ -53,8 +53,14 @@ class TrailerPlayer(ctx: Context) {
     /** True once the current trailer's first frame is on screen (so the artwork can fade away). */
     var playing by mutableStateOf(false)
         private set
-    var currentId: String? = null
+    /** True from the moment a trailer is asked for until it stops (the video surface must exist meanwhile). */
+    var active by mutableStateOf(false)
         private set
+    var currentId: String? = null
+        private set(v) {
+            field = v
+            active = v != null
+        }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var job: Job? = null

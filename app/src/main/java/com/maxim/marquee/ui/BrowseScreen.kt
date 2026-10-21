@@ -283,7 +283,8 @@ private fun TrailerLayer(model: AppModel) {
         },
         // Hidden while no trailer shows, so the screen doesn't keep blending an empty full-screen
         // video layer on every frame (that costs smoothness on TV boxes while you scroll).
-        update = { it.visibility = if (alpha > 0f) android.view.View.VISIBLE else android.view.View.INVISIBLE },
+        // (Visible as soon as a trailer is requested: the picture needs a live surface to start.)
+        update = { it.visibility = if (tp.active || alpha > 0f) android.view.View.VISIBLE else android.view.View.INVISIBLE },
         modifier = Modifier.fillMaxSize().alpha(alpha),
     )
 }

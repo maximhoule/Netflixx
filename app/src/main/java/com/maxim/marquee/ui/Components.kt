@@ -640,12 +640,14 @@ object Nav {
 /** Keeps the focused item pinned at a fixed offset from the start of a list (Netflix-style rows). */
 @OptIn(ExperimentalFoundationApi::class)
 class PivotSpec(private val leadingPx: Float) : BringIntoViewSpec {
-    // Short, decisive scroll; while a direction key is held the list jumps instead of animating,
-    // so it keeps up with the remote instead of trailing behind it.
+    // A stiff, non-bouncy spring: a single press settles in about an eighth of a second, and when
+    // a direction is held each new step folds into the running motion (keeping its speed), so the
+    // row glides continuously with the remote instead of jumping card by card.
     override val scrollAnimationSpec: AnimationSpec<Float>
-        get() = if (Nav.keyHeld) androidx.compose.animation.core.snap() else QUICK
+        get() = if (Nav.keyHeld) HELD else QUICK
 
-    private val QUICK: AnimationSpec<Float> = tween(130, easing = FastOutSlowInEasing)
+    private val QUICK: AnimationSpec<Float> = androidx.compose.animation.core.spring(dampingRatio = 1f, stiffness = 1800f)
+    private val HELD: AnimationSpec<Float> = androidx.compose.animation.core.spring(dampingRatio = 1f, stiffness = 2600f)
 
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
         offset - leadingPx

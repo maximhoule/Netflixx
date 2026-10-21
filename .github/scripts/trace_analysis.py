@@ -82,6 +82,25 @@ for path in sorted(glob.glob(os.path.join(sys.argv[1], "*.pftrace"))):
         p("\nother long main-thread work:")
         for r in other:
             p(f"  {r.dur / 1e6:7.1f} ms  {r.name[:150]}")
+    # Key presses that took long to handle: what inside (focus search, scrolling, building cards...).
+    keys = list(tp.query(
+        f"select id, dur from slice where track_id in {mt} and name like 'ViewPostImeInputStage%' and dur > 10e6"))
+    if keys:
+        agg = defaultdict(float); cnt = defaultdict(int)
+        for k in keys:
+            rows = list(tp.query(f"select s.id, s.name, s.dur, s.parent_id from descendant_slice({k.id}) s"))
+            child = defaultdict(float)
+            for r in rows:
+                if r.parent_id is not None:
+                    child[r.parent_id] += r.dur
+            own = k.dur - sum(r.dur for r in rows if r.parent_id == k.id)
+            agg["(key handling itself, untraced)"] += own / 1e6
+            for r in rows:
+                agg[r.name] += (r.dur - child.get(r.id, 0)) / 1e6
+                cnt[r.name] += 1
+        p(f"\nslow key presses (>10 ms): {len(keys)}, total {sum(k.dur for k in keys) / 1e6:.0f} ms. Inside them (self time):")
+        for nm, t in sorted(agg.items(), key=lambda kv: -kv[1])[:20]:
+            p(f"  {t:8.1f} ms  x{cnt[nm]:<5} {nm[:150]}")
     # Main thread waiting for a CPU (another thread or process had it).
     try:
         st = list(tp.query(

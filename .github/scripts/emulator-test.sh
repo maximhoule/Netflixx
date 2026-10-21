@@ -117,6 +117,13 @@ measure_end player_ui
 adb shell dumpsys meminfo $PKG | grep -E "TOTAL PSS|TOTAL:|Java Heap|Native Heap|Graphics" | head -6 | sed 's/^/player memory: /' | tee -a "$OUT/summary.txt"
 key BACK; sleep 3; shot after_player
 
+summary "== seek previews on a plain video file (pictures taken from the file)"
+adb shell am start -n $PKG/.PlayerActivity \
+  --es url "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" --es type movie \
+  --es metaId tt1254207 --es videoId tt1254207 --es name "Big\ Buck\ Bunny" --es streamName "MP4" >/dev/null
+sleep 15; key DPAD_RIGHT; sleep 0.2; key DPAD_RIGHT DPAD_RIGHT; sleep 3; shot seek_preview
+key BACK; sleep 3
+
 summary "== hide a row from the long-press menu"
 tab 2; sleep 3; key DPAD_DOWN; sleep 2
 adb shell input keyevent --longpress DPAD_CENTER; sleep 2; shot long_press_menu_hide

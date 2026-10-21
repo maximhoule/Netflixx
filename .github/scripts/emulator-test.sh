@@ -116,7 +116,7 @@ key BACK; sleep 3; shot after_player
 summary "== hide a row from the long-press menu"
 tab 2; sleep 3; key DPAD_DOWN; sleep 2
 adb shell input keyevent --longpress DPAD_CENTER; sleep 2; shot long_press_menu_hide
-key DPAD_DOWN DPAD_DOWN DPAD_CENTER; sleep 3; shot row_hidden
+key DPAD_DOWN DPAD_DOWN DPAD_DOWN DPAD_CENTER; sleep 3; shot row_hidden
 tab 3; sleep 3; shot sports_after_hide
 tab 7; sleep 2; fast DPAD_DOWN 14; sleep 1; shot settings_hidden_rows
 

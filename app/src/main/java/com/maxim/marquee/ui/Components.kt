@@ -729,6 +729,12 @@ object PlayerIcons {
     }
     val Next by lazy { vectorIcon("next", "M6,18l8.5,-6L6,6v12zM16,6v12h2V6h-2z") }
     val Check by lazy { vectorIcon("check", "M9,16.17L4.83,12l-1.42,1.41L9,19 21,7l-1.41,-1.41z") }
+    val DoneAll by lazy {
+        vectorIcon(
+            "done_all",
+            "M18,7l-1.41,-1.41 -6.34,6.34 1.41,1.41L18,7zM22.24,5.59L11.66,16.17 7.48,12l-1.41,1.41L11.66,19l12,-12 -1.42,-1.41zM0.41,13.41L6,19l1.41,-1.41L1.83,12 0.41,13.41z",
+        )
+    }
     val Trailer by lazy {
         vectorIcon("trailer", "M18,4l2,4h-3l-2,-4h-2l2,4h-3l-2,-4H8l2,4H7L5,4H4c-1.1,0 -1.99,0.9 -1.99,2L2,18c0,1.1 0.9,2 2,2h16c1.1,0 2,-0.9 2,-2V4h-4z")
     }

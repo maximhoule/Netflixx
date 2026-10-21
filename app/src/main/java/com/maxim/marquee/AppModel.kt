@@ -81,6 +81,8 @@ sealed class Screen {
     data object EmbyLogin : Screen()
     data object PhoneSetup : Screen()
     data object TraktActivate : Screen()
+    /** A title's trailer, full screen in the app's own player (YouTube ids, tried in order). */
+    data class Trailer(val title: String, val ids: List<String>) : Screen()
     /** A friendly explanation when something goes wrong, with ways forward. */
     data class Problem(val kind: Kind, val message: String? = null, val req: PlayReq? = null) : Screen() {
         enum class Kind { OFFLINE, NO_SOURCES, SERVICE, PLAYBACK }
@@ -1607,6 +1609,11 @@ class AppModel(private val activity: MainActivity) {
     fun onVoiceResult(data: Intent?) {
         val text = data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull() ?: return
         searchQuery = text
+    }
+
+    fun openTrailer(title: String, ids: List<String>) {
+        if (ids.isEmpty()) return
+        stack.add(Screen.Trailer(title, ids))
     }
 
     fun playTrailer(ytId: String) {

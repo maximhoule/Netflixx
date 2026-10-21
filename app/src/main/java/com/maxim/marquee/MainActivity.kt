@@ -189,6 +189,7 @@ fun AppRoot(model: AppModel, exit: () -> Unit) {
                         is Screen.EmbyLogin -> EmbyLoginScreen(model)
                         is Screen.PhoneSetup -> com.maxim.marquee.ui.PhoneSetupScreen(model)
                         is Screen.TraktActivate -> com.maxim.marquee.ui.TraktActivateScreen(model)
+                        is Screen.Trailer -> com.maxim.marquee.ui.TrailerScreen(model, top)
                         is Screen.Problem -> ProblemScreen(model, top)
                     }
                 }

@@ -16,6 +16,7 @@ profile = f"""<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
     <string name="authKey">ci-test-session</string>
     <string name="email">ci@example.com</string>
     <string name="addons">{escape(json.dumps(addons), {'"': '&quot;'})}</string>
+    <int name="trailerMode" value="0" />
 </map>
 """
 glob = """<?xml version='1.0' encoding='utf-8' standalone='yes' ?>

@@ -62,7 +62,11 @@ measure_start
 key DPAD_DOWN DPAD_DOWN DPAD_RIGHT; sleep 2
 key DPAD_CENTER; sleep 7; shot detail
 key DPAD_DOWN; sleep 2; key DPAD_DOWN DPAD_DOWN; sleep 3; shot detail_more
-key BACK; sleep 3; shot back_from_detail
+key DPAD_LEFT; sleep 1; key DPAD_DOWN; sleep 2; shot detail_seasons
+# Back while browsing episodes returns to the actions; the trailer button is next to Play.
+key BACK; sleep 2; key DPAD_RIGHT; sleep 1; shot detail_trailer_button
+key DPAD_CENTER; sleep 12; shot trailer_screen
+key BACK; sleep 3; key BACK; sleep 3; shot back_from_detail
 measure_end details
 
 summary "== sports tab"

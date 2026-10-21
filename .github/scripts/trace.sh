@@ -5,6 +5,9 @@ set -u
 PKG=com.maxim.marquee
 OUT=trace
 mkdir -p "$OUT"
+# Step log (kept with the results): which step ran when, and whether the device and app were up.
+step() { echo "$(date +%T) $* | device: $(timeout 10 adb get-state 2>&1) | app pid: $(timeout 10 adb shell pidof $PKG 2>&1)" >> "$OUT/steps.txt"; }
+trap 'step "script end"; timeout 30 adb logcat -d > "$OUT/logcat.txt" 2>&1' EXIT
 key() { for k in "$@"; do adb shell input keyevent "$k"; sleep 0.4; done; }
 fast() { for i in $(seq 1 "$2"); do adb shell input keyevent "$1"; done; }
 tab() { fast DPAD_LEFT 8; sleep 0.6; fast DPAD_UP 10; [ "$1" -gt 0 ] && fast DPAD_DOWN "$1"; key DPAD_CENTER; }
@@ -27,6 +30,7 @@ adb shell chown -R "$APPUID:$APPUID" /data/data/$PKG/shared_prefs
 adb shell chmod 660 /data/data/$PKG/shared_prefs/marquee.xml /data/data/$PKG/shared_prefs/marquee_global.xml
 adb shell restorecon -R /data/data/$PKG/shared_prefs
 
+step "Warm up once"
 # Warm up once (caches filled, like a box that's been used), then compile like the TV does.
 adb shell am start -W -n $PKG/.MainActivity >/dev/null; sleep 20
 key DPAD_DOWN; hold $RIGHT 2; hold $DOWN 2; hold $UP 3
@@ -41,18 +45,21 @@ record() { # record NAME SECONDS: starts a trace in the background
 }
 finish() { sleep "$2"; adb pull /data/misc/perfetto-traces/$1.pftrace "$OUT/$1.pftrace" >/dev/null 2>&1; }
 
+step "1) Launch"
 # 1) Launch to Home.
 record launch 14
 adb shell am start -n $PKG/.MainActivity >/dev/null
 finish launch 14
 sleep 4
 
+step "2) Held"
 # 2) Held arrows on Home: right along a row, back left, down the rows, up again.
 record home_hold 26
 key DPAD_DOWN; sleep 1
 hold $RIGHT 4; sleep 1; hold $LEFT 3; sleep 1; hold $DOWN 3; sleep 1; hold $RIGHT 3; sleep 1; hold $UP 4
 finish home_hold 4
 
+step "3) Single"
 # 3) Single presses at a steady pace (like browsing by hand).
 record home_taps 22
 for i in 1 2 3 4 5 6 7 8; do key DPAD_RIGHT; sleep 0.35; done
@@ -61,6 +68,7 @@ for i in 1 2 3 4 5 6; do key DPAD_LEFT; sleep 0.35; done
 for i in 1 2 3 4; do key DPAD_UP; sleep 0.6; done
 finish home_taps 3
 
+step "4) Tabs"
 # 4) Tabs: Series, Movies, Sports, Home, with a held arrow on each.
 record tabs 30
 tab 4; sleep 2; key DPAD_DOWN; hold $RIGHT 2
@@ -69,6 +77,7 @@ tab 3; sleep 2; key DPAD_DOWN; hold $RIGHT 2
 tab 2; sleep 2
 finish tabs 4
 
+step "5) A show"
 # 5) A show page: open, scroll episodes, back.
 record details 22
 key DPAD_DOWN; sleep 1; key DPAD_CENTER; sleep 5

@@ -3,6 +3,8 @@ package com.maxim.marquee.ui
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.unit.constrainWidth
+import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.focus.focusProperties
 
 import androidx.compose.animation.Crossfade

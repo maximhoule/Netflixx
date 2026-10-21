@@ -578,12 +578,17 @@ fun TitleArt(meta: MetaItem, modifier: Modifier = Modifier, big: Boolean = true,
 
 @Composable
 fun rememberShimmer(): State<Float> =
-    rememberInfiniteTransition(label = "shimmer").animateFloat(
-        initialValue = -0.6f,
-        targetValue = 1.6f,
-        animationSpec = infiniteRepeatable(tween(1300, easing = LinearEasing)),
-        label = "shimmerX",
-    )
+    if (!LocalScreenVisible.current) {
+        // On a screen kept alive in the background: no animation (it would keep the TV redrawing).
+        remember { androidx.compose.runtime.mutableFloatStateOf(0.5f) }
+    } else {
+        rememberInfiniteTransition(label = "shimmer").animateFloat(
+            initialValue = -0.6f,
+            targetValue = 1.6f,
+            animationSpec = infiniteRepeatable(tween(1300, easing = LinearEasing)),
+            label = "shimmerX",
+        )
+    }
 
 /** Grey box with a soft light sweeping across it. Animates in the draw phase only (cheap). */
 fun Modifier.shimmer(progress: State<Float>, shape: Shape = RoundedCornerShape(6.dp)): Modifier =
@@ -733,6 +738,9 @@ object PlayerIcons {
 }
 
 
+/** False inside a screen that's kept alive but hidden: looping animations pause there. */
+val LocalScreenVisible = androidx.compose.runtime.compositionLocalOf { true }
+
 /** Whether the screen something belongs to may take focus. Screens kept alive in the background can't. */
 val LocalFocusGate = staticCompositionLocalOf<() -> Boolean> { { true } }
 
@@ -749,7 +757,8 @@ fun FocusGated(enabled: () -> Boolean, content: @Composable () -> Unit) {
  */
 @Composable
 fun KeepAlive(visible: Boolean, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    Layout(content, modifier) { measurables, constraints ->
+    val parentVisible = LocalScreenVisible.current
+    Layout({ CompositionLocalProvider(LocalScreenVisible provides (visible && parentVisible), content = content) }, modifier) { measurables, constraints ->
         if (!visible) {
             layout(0, 0) {}
         } else {

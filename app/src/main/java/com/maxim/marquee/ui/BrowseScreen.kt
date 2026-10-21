@@ -286,7 +286,8 @@ private fun BoxScope.HeroInfo(model: AppModel, b: BrowseState) {
                 Text(it, color = Color(0xFFE6E6E6), fontSize = 15.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, lineHeight = 21.sp)
             }
         }
-    } else if (model.addonError == null) {
+    } else if (model.addonError == null && b.rows.any { b.loaded[it.key] != true }) {
+        // Only while rows are still loading (nothing to show at all stays still, not shimmering).
         SkeletonHero(Modifier.align(Alignment.BottomStart).padding(start = 14.dp, bottom = 14.dp))
     }
 }

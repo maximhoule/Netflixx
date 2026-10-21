@@ -7,6 +7,13 @@ mkdir -p "$OUT/frames"
 summary() { echo "$*" | tee -a "$OUT/summary.txt"; }
 key() { for k in "$@"; do adb shell input keyevent "$k"; sleep 0.4; done; }
 fast() { for i in $(seq 1 "$2"); do adb shell input keyevent "$1"; done; }
+# A real held remote button: key down on the emulator's keyboard device, so Android sends its own
+# auto-repeats (repeatCount > 0) exactly like a remote held down, then key up.
+KBD=""
+hold() { # hold LINUX_KEYCODE SECONDS
+  [ -z "$KBD" ] && KBD=$(adb shell getevent -pl 2>/dev/null | tr -d '\r' | awk '/add device/{d=$4} /KEY_RIGHT/{print d; exit}')
+  adb shell "sendevent $KBD 1 $1 1; sendevent $KBD 0 0 0; sleep $2; sendevent $KBD 1 $1 0; sendevent $KBD 0 0 0"
+}
 measure_start() { adb shell dumpsys gfxinfo $PKG reset >/dev/null; }
 measure_end() {
   adb shell dumpsys gfxinfo $PKG framestats > "$OUT/frames/$1.txt"
@@ -35,6 +42,9 @@ browse() {
   measure_start
   fast DPAD_RIGHT 25; sleep 1; fast DPAD_DOWN 8; sleep 1; fast DPAD_UP 12; sleep 3
   measure_end "$1 held-keys"
+  measure_start
+  hold 106 3; sleep 1; hold 105 3; sleep 1; hold 108 2; sleep 1; hold 103 2; sleep 2
+  measure_end "$1 real-hold"
   measure_start
   key DPAD_DOWN DPAD_DOWN DPAD_RIGHT; sleep 2; key DPAD_CENTER; sleep 6; key DPAD_DOWN; sleep 2; key BACK; sleep 3
   measure_end "$1 details"

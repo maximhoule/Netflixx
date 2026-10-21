@@ -246,6 +246,14 @@ object Store {
         set(v) = setBool("showRecaps", v)
 
     /** Send Dolby / DTS audio untouched to the TV or soundbar when it supports it (otherwise decoded here). */
+    /**
+     * DTS and Dolby TrueHD are converted here (to regular multichannel sound) instead of being sent
+     * to the TV, which many TVs accept but can't actually play (silence). On by default.
+     */
+    var convertDts: Boolean
+        get() = bool("convertDts", true)
+        set(v) = setBool("convertDts", v)
+
     var passthrough: Boolean
         get() = bool("passthrough", true)
         set(v) = setBool("passthrough", v)

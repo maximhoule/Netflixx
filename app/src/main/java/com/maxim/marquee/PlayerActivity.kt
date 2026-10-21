@@ -213,7 +213,11 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         }
 
         if (type == "series") lifecycleScope.launch { segments = Repo.segments(videoId) }
-        embyId?.let { id -> lifecycleScope.launch { thumbs = com.maxim.marquee.data.Emby.seekThumbnails(id) } }
+        // Preview pictures while skipping: your server's ready-made ones, else taken from the video itself.
+        lifecycleScope.launch {
+            thumbs = embyId?.let { com.maxim.marquee.data.Emby.seekThumbnails(it) }
+                ?: if (!url.contains(".m3u8", ignoreCase = true)) com.maxim.marquee.data.SeekThumbnails.Extracted(url, httpHeaders) else null
+        }
 
         lifecycleScope.launch { ticker() }
         lifecycleScope.launch {
@@ -279,7 +283,19 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
                 enableAudioTrackPlaybackParams: Boolean,
             ): androidx.media3.exoplayer.audio.AudioSink {
                 @Suppress("DEPRECATION")
-                val b = if (passthrough) {
+                val b = if (passthrough && Store.convertDts) {
+                    // Pass through only Dolby Digital / Dolby Digital Plus (which every TV plays);
+                    // DTS and TrueHD are decoded here so they can't come out silent.
+                    val caps = androidx.media3.exoplayer.audio.AudioCapabilities.getCapabilities(context)
+                    val keep = intArrayOf(C.ENCODING_AC3, C.ENCODING_E_AC3, C.ENCODING_E_AC3_JOC, C.ENCODING_AC4)
+                        .filter { caps.supportsEncoding(it) }
+                    androidx.media3.exoplayer.audio.DefaultAudioSink.Builder().setAudioCapabilities(
+                        androidx.media3.exoplayer.audio.AudioCapabilities(
+                            (listOf(C.ENCODING_PCM_16BIT) + keep).toIntArray(),
+                            caps.maxChannelCount,
+                        ),
+                    )
+                } else if (passthrough) {
                     androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(context)
                 } else {
                     // Without a context the sink assumes no passthrough support: everything is decoded here.
@@ -1010,6 +1026,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
     }
 
     override fun onDestroy() {
+        thumbs?.release()
         if (::player.isInitialized) player.release()
         super.onDestroy()
     }

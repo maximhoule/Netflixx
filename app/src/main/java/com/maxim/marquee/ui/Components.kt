@@ -1,5 +1,10 @@
 package com.maxim.marquee.ui
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.focus.focusProperties
+
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -107,10 +112,13 @@ fun Tile(
     var longFired by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (focused) focusedScale else 1f, tween(110, easing = FastOutSlowInEasing), label = "tileScale")
     val interaction = remember { MutableInteractionSource() }
+    val gate = LocalFocusGate.current
     Box(
         modifier
             .zIndex(if (focused) 1f else 0f)
             .graphicsLayer { scaleX = scale; scaleY = scale }
+            // A screen kept in the background (see KeepAlive) can't take focus.
+            .focusProperties { canFocus = gate() }
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onFocusChanged {
                 val f = it.isFocused
@@ -199,14 +207,11 @@ fun PosterCard(
     val canExpand = expandable && shape == CardShape.POSTER
     var focused by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
-    if (canExpand) {
-        LaunchedEffect(focused) {
-            if (focused) {
-                kotlinx.coroutines.delay(900)
-                expanded = true
-            } else {
-                expanded = false
-            }
+    // Only the focused card runs a timer (not one per card on screen).
+    if (canExpand && focused) {
+        LaunchedEffect(Unit) {
+            kotlinx.coroutines.delay(900)
+            expanded = true
         }
     }
     // Opens smoothly, closes instantly: a row sliding back while the screen scrolls looks sluggish.
@@ -221,7 +226,7 @@ fun PosterCard(
         focusedScale = if (canExpand) 1.05f else 1.08f,
         focusRequester = focusRequester,
         onFocus = onFocus,
-        onFocusChange = { focused = it },
+        onFocusChange = { focused = it; if (!it) expanded = false },
         onLongClick = onLongClick,
         onClick = onClick,
     ) {
@@ -722,5 +727,34 @@ object PlayerIcons {
     }
     val Restart by lazy {
         vectorIcon("restart", "M12,5V1L7,6l5,5V7c3.31,0 6,2.69 6,6s-2.69,6 -6,6 -6,-2.69 -6,-6H4c0,4.42 3.58,8 8,8s8,-3.58 8,-8 -3.58,-8 -8,-8z")
+    }
+}
+
+
+/** Whether the screen something belongs to may take focus. Screens kept alive in the background can't. */
+val LocalFocusGate = staticCompositionLocalOf<() -> Boolean> { { true } }
+
+/** Content that can take focus only while [enabled] (and while its enclosing screen can). */
+@Composable
+fun FocusGated(enabled: () -> Boolean, content: @Composable () -> Unit) {
+    val parent = LocalFocusGate.current
+    CompositionLocalProvider(LocalFocusGate provides { parent() && enabled() }, content = content)
+}
+
+/**
+ * Keeps [content] composed while it's hidden (not measured, placed or drawn: it costs nothing per
+ * frame), so coming back to it is instant instead of building the whole screen again.
+ */
+@Composable
+fun KeepAlive(visible: Boolean, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Layout(content, modifier) { measurables, constraints ->
+        if (!visible) {
+            layout(0, 0) {}
+        } else {
+            val placeables = measurables.map { it.measure(constraints) }
+            val w = constraints.constrainWidth(placeables.maxOfOrNull { it.width } ?: 0)
+            val h = constraints.constrainHeight(placeables.maxOfOrNull { it.height } ?: 0)
+            layout(w, h) { placeables.forEach { it.place(0, 0) } }
+        }
     }
 }

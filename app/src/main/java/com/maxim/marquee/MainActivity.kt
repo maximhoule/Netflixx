@@ -175,9 +175,15 @@ fun AppRoot(model: AppModel, exit: () -> Unit) {
                 if (model.profiles.size > 1) BackHandler { model.openProfiles() }
             } else {
                 val top = model.stack.lastOrNull()
+                // Home stays built underneath other screens (hidden, not drawn), so Back is instant.
+                com.maxim.marquee.ui.KeepAlive(visible = top == null, modifier = Modifier.fillMaxSize()) {
+                    com.maxim.marquee.ui.FocusGated({ model.stack.isEmpty() }) {
+                        MainShell(model, railRequesters, active = top == null)
+                    }
+                }
                 key(top) {
                     when (top) {
-                        null -> MainShell(model, railRequesters)
+                        null -> Unit
                         is Screen.Detail -> DetailScreen(model, top)
                         is Screen.Streams -> StreamsScreen(model, top)
                         is Screen.EmbyLogin -> EmbyLoginScreen(model)

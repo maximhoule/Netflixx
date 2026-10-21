@@ -65,15 +65,34 @@ import com.maxim.marquee.data.CardItem
 
 val CARD_W = 118.dp
 
+private val BROWSE_TABS = setOf(Tab.HOME, Tab.SERIES, Tab.MOVIES, Tab.SPORTS)
+
+/**
+ * The menu and the current tab. Home, Series, Movies and Sports stay built once visited (hidden,
+ * not drawn), so switching back to one, or coming back from a show's page, is instant and lands
+ * exactly where you were. [active] is false while another screen (a show's page…) is on top.
+ */
 @Composable
-fun MainShell(model: AppModel, railRequesters: Map<Tab, FocusRequester>) {
+fun MainShell(model: AppModel, railRequesters: Map<Tab, FocusRequester>, active: Boolean = true) {
     Box(Modifier.fillMaxSize().background(C.Bg)) {
+        // Another tab, or a screen on top: the trailer stops (the next billboard starts its own).
+        LaunchedEffect(active, model.tab) { model.stopTrailer() }
+        val visited = remember { LinkedHashSet<Tab>() }
+        if (model.tab in BROWSE_TABS) visited += model.tab
+        visited.forEach { t ->
+            androidx.compose.runtime.key(t) {
+                KeepAlive(visible = model.tab == t, modifier = Modifier.fillMaxSize()) {
+                    FocusGated({ model.tab == t }) {
+                        BrowseScreen(model, model.browse.getValue(t), active = active && model.tab == t)
+                    }
+                }
+            }
+        }
         when (model.tab) {
-            Tab.HOME, Tab.SERIES, Tab.MOVIES, Tab.SPORTS -> BrowseScreen(model, model.browse.getValue(model.tab))
             Tab.SEARCH -> SearchScreen(model)
             Tab.MYLIST -> MyListScreen(model)
             Tab.SETTINGS -> SettingsScreen(model)
-            Tab.PROFILE -> Unit
+            else -> Unit
         }
         Rail(model, railRequesters)
     }
@@ -158,12 +177,13 @@ fun Rail(model: AppModel, requesters: Map<Tab, FocusRequester>) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun BrowseScreen(model: AppModel, b: BrowseState) {
-    LaunchedEffect(b) {
-        if (b.lastFocusKey != null) b.pendingFocusKey = b.lastFocusKey
+fun BrowseScreen(model: AppModel, b: BrowseState, active: Boolean = true) {
+    // Shown again (back from a show's page, or this tab picked again): focus where you left off.
+    LaunchedEffect(active) {
+        if (active && b.lastFocusKey != null) b.pendingFocusKey = b.lastFocusKey
     }
-    LaunchedEffect(model.contentFocusTick) {
-        if (model.contentFocusTick > model.handledTick) {
+    LaunchedEffect(model.contentFocusTick, active) {
+        if (active && model.contentFocusTick > model.handledTick) {
             model.handledTick = model.contentFocusTick
             b.pendingFocusKey = b.lastFocusKey ?: b.firstKey()
         }
@@ -177,7 +197,7 @@ fun BrowseScreen(model: AppModel, b: BrowseState) {
         val heroH = maxHeight * 0.48f
         // The billboard lives in its own composables: changing title only redraws the billboard,
         // never the rows below it.
-        HeroBackdrop(model, b, Modifier.align(Alignment.TopEnd).fillMaxWidth(0.74f).height(maxHeight * 0.72f))
+        HeroBackdrop(model, b, active, Modifier.align(Alignment.TopEnd).fillMaxWidth(0.74f).height(maxHeight * 0.72f))
 
         Column(Modifier.fillMaxSize().padding(start = RAIL + 12.dp)) {
             Box(Modifier.fillMaxWidth().height(heroH)) {
@@ -222,11 +242,11 @@ fun BrowseScreen(model: AppModel, b: BrowseState) {
 }
 
 @Composable
-private fun HeroBackdrop(model: AppModel, b: BrowseState, modifier: Modifier) {
+private fun HeroBackdrop(model: AppModel, b: BrowseState, active: Boolean, modifier: Modifier) {
     val hero = b.hero
     val bg = b.heroMeta?.background ?: hero?.meta?.backdropUrl
     // Trailer behind the billboard once you rest on a title for a couple of seconds.
-    val trailersOn = Store.trailerMode != 0
+    val trailersOn = Store.trailerMode != 0 && active
     val heroMeta = b.heroMeta
     val extras = heroMeta?.let { rememberExtras(it) }
     val ids = (heroMeta?.trailers ?: emptyList()) + (extras?.trailers ?: emptyList())

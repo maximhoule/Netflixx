@@ -884,9 +884,12 @@ class AppModel(private val activity: MainActivity) {
 
     fun refreshContinue() {
         localVersion++
+        val items = continueItems()
         browse.values.filter { it.withContinue }.forEach { b ->
-            b.rowItems["continue"] = continueItems()
-            b.loaded["continue"] = true
+            // Same as before (the usual case for the 2-minute sync): leave the row alone, so it
+            // doesn't rebuild under you while you're scrolling.
+            if (b.rowItems["continue"] != items) b.rowItems["continue"] = items
+            if (b.loaded["continue"] != true) b.loaded["continue"] = true
             afterRowLoaded(b)
         }
     }
@@ -958,10 +961,16 @@ class AppModel(private val activity: MainActivity) {
         return lastEp ?: eps.firstOrNull { it.season > 0 } ?: eps.firstOrNull()
     }
 
+    /**
+     * The episode after [videoId], if it has aired. (Addons list upcoming episodes too: lining one
+     * of those up would keep a finished show in Continue Watching until it airs.)
+     */
     fun nextVideo(meta: MetaItem, videoId: String): Video? {
         val eps = sortedEpisodes(meta).filter { it.season > 0 }
         val i = eps.indexOfFirst { it.id == videoId }
-        return if (i >= 0 && i + 1 < eps.size) eps[i + 1] else null
+        val next = if (i >= 0 && i + 1 < eps.size) eps[i + 1] else return null
+        // A day's grace for time zones (air dates are midnight UTC).
+        return if (next.released > System.currentTimeMillis() + 24 * 3_600_000L) null else next
     }
 
     fun reqFor(meta: MetaItem, video: Video?): PlayReq = PlayReq(

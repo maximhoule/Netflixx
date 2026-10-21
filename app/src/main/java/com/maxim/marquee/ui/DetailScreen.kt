@@ -310,6 +310,7 @@ private fun TabChip(label: String, selected: Boolean, onFocus: () -> Unit, down:
 }
 
 /** Seasons down the left, that season's episodes down the right. */
+@kotlin.OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 private fun EpisodesPane(
     model: AppModel,

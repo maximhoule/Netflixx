@@ -6,6 +6,8 @@ on:
     # Test tooling changes don't need a new app release.
     paths-ignore:
       - ".github/workflows/emulator.yml"
+      - ".github/workflows/perf.yml"
+      - ".github/workflows/trace.yml"
       - ".github/scripts/**"
   workflow_dispatch:
 

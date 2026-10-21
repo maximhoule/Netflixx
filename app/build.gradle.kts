@@ -70,6 +70,8 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
+    // Names each composable in performance traces (only active while a trace is being recorded).
+    implementation("androidx.compose.runtime:runtime-tracing:1.7.5")
 
     implementation("androidx.core:core-ktx:1.13.1")
     // Installs the bundled Compose baseline profiles on sideloaded installs: pre-compiled UI code, smoother from first launch.

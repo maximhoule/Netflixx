@@ -806,6 +806,9 @@ class AppModel(private val activity: MainActivity) {
         return byId.values
             // Taken off by hand: stays off until you watch it again.
             .filter { c -> maxOf(hidden[c.metaId] ?: -1, hidden[nameKey(c.type, c.name)] ?: -1) < c.time }
+            // "Up next" pointing at an episode that hasn't aired yet (lined up by an older version
+            // or another app): the show is finished for now.
+            .filterNot { c -> c.pos == 1L && c.type == "series" && notAiredYet(c.metaId, c.videoId) }
             // The same show from Stremio and from your Emby server (when the server doesn't know its
             // IMDb id, the two can't be matched by id): keep only the most recent one.
             .groupBy { nameKey(it.type, it.name) }
@@ -880,6 +883,8 @@ class AppModel(private val activity: MainActivity) {
             b.rowItems["new-eps"] = newEpisodes
             b.loaded["new-eps"] = true
         }
+        // Show details are fresh now: drops any "up next" that hasn't aired (no change = no redraw).
+        refreshContinue()
     }
 
     fun refreshContinue() {
@@ -1266,6 +1271,11 @@ class AppModel(private val activity: MainActivity) {
             delay(800)
             loadLibrary()
         }
+    }
+
+    private fun notAiredYet(metaId: String, videoId: String): Boolean {
+        val v = Repo.cachedMeta("series", metaId)?.videos?.firstOrNull { it.id == videoId } ?: return false
+        return v.released > System.currentTimeMillis() + 24 * 3_600_000L
     }
 
     /** A title's name, simplified, so "The Office (US)" from one source matches "The Office" from another. */

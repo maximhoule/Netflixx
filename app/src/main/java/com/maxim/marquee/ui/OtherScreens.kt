@@ -512,8 +512,8 @@ fun SettingsScreen(model: AppModel) {
             "Auto sends Dolby / DTS straight to your TV or soundbar. Off decodes it here (try this if you get silence or crackling)",
         ) { Store.passthrough = !Store.passthrough; version++ }
         SettingRow(
-            "DTS & TrueHD audio", if (Store.convertDts) "Convert here" else "Send to TV",
-            "Convert plays them as regular surround sound, for TVs that can't play DTS (no more silent sources)",
+            "DTS & TrueHD audio", if (Store.convertDts) "Convert here" else "Pass through if supported",
+            "Convert plays them as surround sound on any TV. Pass through sends them untouched (lossless, DTS:X / Atmos) to a receiver that supports them",
         ) { Store.convertDts = !Store.convertDts; version++ }
         SettingRow("Night mode", onOff(Store.nightMode), "Evens out loud and quiet scenes and lifts voices · also in the player's audio menu") {
             Store.nightMode = !Store.nightMode; version++

@@ -17,10 +17,24 @@ val AppScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 class App : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
+        CrashGuard.install(this)
         Store.init(this)
         com.maxim.marquee.data.Http.init(cacheDir)
         // Read saved progress and profiles before the first screen needs them.
         AppScope.launch { Store.warmUp() }
+    }
+
+    /** The TV is short on memory: give back the picture cache (it refills from disk instantly). */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        @Suppress("DEPRECATION")
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            runCatching {
+                val cache = coil.Coil.imageLoader(this).memoryCache ?: return@runCatching
+                if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND) cache.clear()
+                else cache.trimMemory(level)
+            }
+        }
     }
 
     override fun newImageLoader(): ImageLoader = ImageLoader.Builder(this)

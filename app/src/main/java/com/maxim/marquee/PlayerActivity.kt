@@ -123,6 +123,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
     private var outcomeVideo: String? = null
     private var outcomeAuto = false
     private var netRetries = 0
+    private var stableJob: Job? = null
     private var forceHls = false
     private var started = false
     private var consumedKey = -1
@@ -306,11 +307,11 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         }
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
             // TV boxes often ship a DTS / TrueHD decoder that "works" but only outputs silence
-            // (no licence). With conversion on, those are skipped so the app's own FFmpeg decoder
-            // handles them.
+            // (no licence): those are always skipped, so the app's own FFmpeg decoder handles them
+            // whenever they aren't passed through to a receiver.
             .setMediaCodecSelector { mime, secure, tunneling ->
                 val m = mime.lowercase()
-                if (Store.convertDts && (m.startsWith("audio/vnd.dts") || m == "audio/true-hd" || m == "audio/mlp")) {
+                if (m.startsWith("audio/vnd.dts") || m == "audio/true-hd" || m == "audio/mlp") {
                     emptyList()
                 } else {
                     androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT.getDecoderInfos(mime, secure, tunneling)
@@ -342,7 +343,13 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             .setBackBuffer(30_000, true)
             .build()
 
-        val sources = DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http))
+        val extractors = androidx.media3.extractor.DefaultExtractorsFactory()
+            // Seeking in MP3 / AAC / AMR files that have no index.
+            .setConstantBitrateSeekingEnabled(true)
+            .setConstantBitrateSeekingAlwaysEnabled(true)
+            // DTS tracks in Blu-ray rips (.m2ts / .ts).
+            .setTsExtractorFlags(androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS)
+        val sources = DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http), extractors)
             .setLoadErrorHandlingPolicy(androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(6))
 
         val p = ExoPlayer.Builder(this, renderers)
@@ -401,7 +408,12 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
     private val listener = object : Player.Listener {
         override fun onPlaybackStateChanged(state: Int) {
             ui.buffering = state == Player.STATE_BUFFERING || (state == Player.STATE_IDLE && !started)
-            if (state == Player.STATE_READY) started = true
+            if (state == Player.STATE_READY) {
+                started = true
+                // Playing smoothly again: the next network drop gets the full set of reconnects.
+                stableJob?.cancel()
+                stableJob = lifecycleScope.launch { delay(60_000); netRetries = 0 }
+            }
             if (state == Player.STATE_ENDED) onEnded()
         }
 
@@ -453,12 +465,19 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
                     player.prepare(); player.play()
                     return
                 }
-                // Network hiccup mid-show: reconnect from the same spot, backing off a little each time.
-                started && code in 2000..2999 && netRetries < 4 -> {
+                // Network hiccup mid-show: reconnect from the same spot. If the TV is offline, wait
+                // (up to 2 minutes) for the connection to come back, then carry on by itself.
+                started && code in 2000..2999 && netRetries < 6 -> {
                     netRetries++
                     flash("Reconnecting…")
                     lifecycleScope.launch {
-                        delay(1_000L * netRetries)
+                        if (!com.maxim.marquee.data.Net.online(this@PlayerActivity)) {
+                            flash("Connection lost · waiting for the network…")
+                            waitForNetwork(120_000)
+                        } else {
+                            delay(700L * netRetries)
+                        }
+                        if (finishing) return@launch
                         player.prepare()
                         if (!live) player.seekTo(pos)
                         player.play()
@@ -473,6 +492,19 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             if (code in 4000..4999) failReason = "decoder"
             outcome = "error"
             finish()
+        }
+    }
+
+    /** Suspends until the TV has internet again (or [timeoutMs] passes). */
+    private suspend fun waitForNetwork(timeoutMs: Long) {
+        if (com.maxim.marquee.data.Net.online(this)) return
+        val back = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val stop = com.maxim.marquee.data.Net.watch(this) { up -> if (up) back.complete(Unit) }
+        try {
+            kotlinx.coroutines.withTimeoutOrNull(timeoutMs) { back.await() }
+            delay(1_500) // let the connection settle (DHCP, DNS) before asking again
+        } finally {
+            stop()
         }
     }
 
@@ -884,9 +916,38 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
                 }
                 .minByOrNull { it.second }?.first ?: return
             if (best.modeId != cur.modeId) {
+                // The TV goes blank for a moment while it changes refresh rate: hold playback
+                // until it's done, so nothing is missed (and no judder after).
+                val wasPlaying = player.playWhenReady
+                player.playWhenReady = false
+                val dm = getSystemService(android.hardware.display.DisplayManager::class.java)
+                var resumed = false
+                val resume = {
+                    if (!resumed && !finishing) {
+                        resumed = true
+                        player.playWhenReady = wasPlaying
+                    }
+                }
+                val listener = object : android.hardware.display.DisplayManager.DisplayListener {
+                    override fun onDisplayAdded(displayId: Int) = Unit
+                    override fun onDisplayRemoved(displayId: Int) = Unit
+                    override fun onDisplayChanged(displayId: Int) {
+                        if (displayId == display.displayId && display.mode.modeId == best.modeId) {
+                            runCatching { dm?.unregisterDisplayListener(this) }
+                            lifecycleScope.launch { delay(1_200); resume() }
+                        }
+                    }
+                }
+                runCatching { dm?.registerDisplayListener(listener, android.os.Handler(mainLooper)) }
                 val lp = window.attributes
                 lp.preferredDisplayModeId = best.modeId
                 window.attributes = lp
+                // Some TVs never report the change: carry on anyway.
+                lifecycleScope.launch {
+                    delay(4_000)
+                    runCatching { dm?.unregisterDisplayListener(listener) }
+                    resume()
+                }
             }
         } catch (e: Exception) {
             // Some boxes don't allow mode switching; ignore.

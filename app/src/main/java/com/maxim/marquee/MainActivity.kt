@@ -102,6 +102,8 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    private var frameSinceStep = true
+
     /** True while OK is physically held down. */
     var okHeld = false
     /** Set when a long-press opened a menu: the release of that same press must not click anything. */
@@ -110,8 +112,20 @@ class MainActivity : ComponentActivity() {
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
         when (event.keyCode) {
             android.view.KeyEvent.KEYCODE_DPAD_UP, android.view.KeyEvent.KEYCODE_DPAD_DOWN,
-            android.view.KeyEvent.KEYCODE_DPAD_LEFT, android.view.KeyEvent.KEYCODE_DPAD_RIGHT ->
-                com.maxim.marquee.ui.Nav.keyHeld = event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount > 0
+            android.view.KeyEvent.KEYCODE_DPAD_LEFT, android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                val held = event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount > 0
+                com.maxim.marquee.ui.Nav.keyHeld = held
+                // Holding an arrow: take at most one step per screen frame. Repeats that arrive
+                // before the last step was drawn are dropped, so the screen never runs behind the
+                // remote and stops exactly when you let go (no coasting on a backlog of presses).
+                if (held) {
+                    if (!frameSinceStep) return true
+                    frameSinceStep = false
+                    android.view.Choreographer.getInstance().postFrameCallback { frameSinceStep = true }
+                } else {
+                    frameSinceStep = true
+                }
+            }
         }
         val ok = event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
             event.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||

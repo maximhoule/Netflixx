@@ -161,6 +161,8 @@ summary "== results"
 adb logcat -d > "$OUT/logcat.txt"
 grep -E "Choreographer.*Skipped [0-9]+ frames" "$OUT/logcat.txt" | head -10 | sed 's/^/compiled skipped: /' | tee -a "$OUT/summary.txt"
 cat "$OUT/logcat_first_run.txt" "$OUT/logcat.txt" > "$OUT/logcat_all.txt"; mv "$OUT/logcat_all.txt" "$OUT/logcat.txt"
+# Errors the app's crash guard caught (the app recovered, but they're still bugs).
+cat "$OUT/logcat_first_run.txt" "$OUT/logcat.txt" 2>/dev/null | grep -A12 "Marquee : caught error" | head -80 | sed 's/^/caught: /' | tee -a "$OUT/summary.txt"
 if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt"; then
   summary "CRASHES:"; grep -A25 "FATAL EXCEPTION" "$OUT/logcat.txt" | head -150 | tee -a "$OUT/summary.txt"
 else

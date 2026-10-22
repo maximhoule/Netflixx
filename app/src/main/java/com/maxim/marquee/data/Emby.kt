@@ -593,6 +593,34 @@ object Emby {
      * Preview pictures for the seek bar, if the server has made them: Jellyfin "trickplay"
      * tiles, or Emby's thumbnail (BIF) files. Null when the library has none.
      */
+    /**
+     * Intro / recap / credits markers your server detected in this very file (Emby chapter
+     * markers, or Jellyfin media segments): exact for the copy you're watching.
+     */
+    suspend fun markers(videoId: String): Repo.Segments? {
+        if (!connected) return null
+        val raw = rawId(videoId)
+        fun ms(ticks: Long?) = (ticks ?: -1) / 10_000
+        // Jellyfin 10.10+.
+        getObj("/MediaSegments/$raw")?.arr("Items").objects().takeIf { it.isNotEmpty() }?.let { items ->
+            fun seg(type: String) = items.firstOrNull { it.str("Type").equals(type, true) }?.let {
+                val a = ms(it.long("StartTicks")); val b = ms(it.long("EndTicks"))
+                if (a >= 0 && b > a) Repo.Segment(a, b) else null
+            }
+            val s = Repo.Segments(seg("Intro"), seg("Recap"), seg("Outro"))
+            if (s.intro != null || s.recap != null || s.outro != null) return s
+        }
+        // Emby 4.7+: chapters marked IntroStart / IntroEnd / CreditsStart.
+        val chapters = getObj("/Users/$userId/Items/$raw?Fields=Chapters")?.arr("Chapters").objects() ?: return null
+        fun at(type: String) = chapters.firstOrNull { it.str("MarkerType").equals(type, true) }?.long("StartPositionTicks")?.let { ms(it) }
+        val introStart = at("IntroStart")
+        val introEnd = at("IntroEnd")
+        val credits = at("CreditsStart")
+        val intro = if (introStart != null && introEnd != null && introEnd > introStart) Repo.Segment(introStart, introEnd) else null
+        val outro = credits?.let { Repo.Segment(it, Long.MAX_VALUE) }
+        return if (intro != null || outro != null) Repo.Segments(intro, null, outro) else null
+    }
+
     suspend fun seekThumbnails(videoId: String): SeekThumbnails? {
         if (!connected) return null
         val raw = rawId(videoId)

@@ -428,7 +428,8 @@ object Repo {
         } ?: false
     }
 
-    data class Segment(val startMs: Long, val endMs: Long)
+    /** [sure]: timing trusted enough to skip by itself (several matching submissions, or from your own server). */
+    data class Segment(val startMs: Long, val endMs: Long, val sure: Boolean = true)
     data class Segments(val intro: Segment?, val recap: Segment?, val outro: Segment?)
 
     /** Intro / recap / credits timestamps from IntroDB (community data, no key needed). */
@@ -443,7 +444,17 @@ object Repo {
             val s = o.obj(k) ?: return null
             val start = s.long("start_ms") ?: s.long("start_sec")?.times(1000) ?: return null
             val end = s.long("end_ms") ?: s.long("end_sec")?.times(1000) ?: return null
-            return if (end > start) Segment(start, end) else null
+            if (end <= start) return null
+            // Community timings: a single or low-confidence submission is often for a different
+            // release (an extra recap or logo shifts everything). Too unsure = not offered at all;
+            // somewhat sure = a button you can choose to press; sure = may skip by itself.
+            val confidence = s.optDouble("confidence", Double.NaN)
+            val count = s.int("submission_count")
+            if (!confidence.isNaN() && confidence < 0.5) return null
+            val len = end - start
+            if (k != "outro" && (len < 5_000 || len > 240_000 || start > 25 * 60_000L)) return null
+            val sure = (confidence.isNaN() || confidence >= 0.8) && (count == null || count >= 2)
+            return Segment(start, end, sure)
         }
         return Segments(seg("intro"), seg("recap"), seg("outro"))
     }

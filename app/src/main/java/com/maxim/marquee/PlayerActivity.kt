@@ -213,7 +213,11 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             }
         }
 
-        if (type == "series") lifecycleScope.launch { segments = Repo.segments(videoId) }
+        // Skip intro: your server's own markers for this file first (exact), else community timings.
+        if (type == "series") lifecycleScope.launch {
+            segments = embyId?.let { runCatching { com.maxim.marquee.data.Emby.markers(it) }.getOrNull() }
+                ?: Repo.segments(videoId)
+        }
         // Preview pictures while skipping: only your server's ready-made ones (Emby / Jellyfin).
         embyId?.let { id -> lifecycleScope.launch { thumbs = com.maxim.marquee.data.Emby.seekThumbnails(id) } }
 
@@ -616,11 +620,14 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
 
             // Skip intro / recap
             val seg = segments
-            val active = listOfNotNull(
-                seg?.intro?.let { Triple("Skip Intro", it.startMs, it.endMs) },
-                seg?.recap?.let { Triple("Skip Recap", it.startMs, it.endMs) },
-            ).firstOrNull { pos >= it.second && pos < it.third - 1_500 }
-            if (active != null && Store.autoSkipIntro && autoSkipped.add(active.second)) {
+            val segs = listOfNotNull(
+                seg?.intro?.let { "Skip Intro" to it },
+                seg?.recap?.let { "Skip Recap" to it },
+            ).filter { (_, s) -> dur <= 0 || s.endMs < dur } // timings past the end belong to another cut
+            val hit = segs.firstOrNull { (_, s) -> pos >= s.startMs && pos < s.endMs - 1_500 }
+            val active = hit?.let { (label, s) -> Triple(label, s.startMs, s.endMs) }
+            // Only trusted timings skip by themselves; unsure ones just offer the button.
+            if (active != null && Store.autoSkipIntro && hit.second.sure && autoSkipped.add(active.second)) {
                 player.seekTo(active.third)
                 flash(active.first.replace("Skip", "Skipped"))
                 ui.skip = null

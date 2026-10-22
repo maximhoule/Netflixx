@@ -125,7 +125,9 @@ summary "== seek previews on a plain video file (pictures taken from the file)"
 adb shell am start -n $PKG/.PlayerActivity \
   --es url "https://raw.githubusercontent.com/maximhoule/Netflixx/main/.github/scripts/test-video.mp4" --es type movie \
   --es metaId tt1254207 --es videoId tt1254207 --es name "Big\ Buck\ Bunny" --es streamName "MP4" >/dev/null
-sleep 15; key DPAD_RIGHT; sleep 0.2; key DPAD_RIGHT DPAD_RIGHT; sleep 3; shot seek_preview
+sleep 15; key DPAD_RIGHT; sleep 0.2; key DPAD_RIGHT DPAD_RIGHT; sleep 4
+# Back one step (its picture is already made): the preview should show at once.
+adb shell input keyevent DPAD_RIGHT; sleep 4; adb shell input keyevent DPAD_LEFT; sleep 0.5; shot seek_preview
 key BACK; sleep 3
 
 summary "== hide a row from the long-press menu"

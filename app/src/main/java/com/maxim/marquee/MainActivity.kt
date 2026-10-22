@@ -109,7 +109,20 @@ class MainActivity : ComponentActivity() {
     /** Set when a long-press opened a menu: the release of that same press must not click anything. */
     var swallowOkUp = false
 
+    /** Search requested by the system (some remotes' search key): voice search in the app. */
+    override fun onSearchRequested(): Boolean {
+        model.voiceFromRemote()
+        return true
+    }
+
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        // The remote's microphone / search button, when the TV passes it to the app.
+        when (event.keyCode) {
+            android.view.KeyEvent.KEYCODE_SEARCH, android.view.KeyEvent.KEYCODE_VOICE_ASSIST -> {
+                if (event.action == android.view.KeyEvent.ACTION_UP && !event.isCanceled) model.voiceFromRemote()
+                return true
+            }
+        }
         when (event.keyCode) {
             android.view.KeyEvent.KEYCODE_DPAD_UP, android.view.KeyEvent.KEYCODE_DPAD_DOWN,
             android.view.KeyEvent.KEYCODE_DPAD_LEFT, android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {

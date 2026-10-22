@@ -1613,6 +1613,15 @@ class AppModel(private val activity: MainActivity) {
     fun onVoiceResult(data: Intent?) {
         val text = data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull() ?: return
         searchQuery = text
+        // Spoken from anywhere in the app: show the results.
+        stack.clear()
+        tab = Tab.SEARCH
+    }
+
+    /** The remote's search / microphone button inside the app: straight to voice search. */
+    fun voiceFromRemote() {
+        if (loading != null) return
+        voiceSearch()
     }
 
     fun openTrailer(title: String, ids: List<String>) {

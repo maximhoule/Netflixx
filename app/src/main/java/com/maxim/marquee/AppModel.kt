@@ -1025,7 +1025,9 @@ class AppModel(private val activity: MainActivity) {
             return true
         }
         val (good, rest) = streams.partition { ok(it) }
-        return good + rest
+        // Your own server's copy first, then the addons' (each group keeps its own order).
+        fun serverFirst(l: List<StreamItem>) = l.sortedBy { if (it.embyId != null) 0 else 1 }
+        return serverFirst(good) + serverFirst(rest)
     }
 
     private val streamCache = HashMap<String, Pair<Long, Deferred<List<StreamItem>>>>()

@@ -327,6 +327,19 @@ object Emby {
 
     /** IMDb id ⇄ Emby id for every movie and series on the server. */
     private val imdbToEmby = HashMap<String, String>()
+    private val nameToEmby = HashMap<String, String>()
+
+    private val nonWord = Regex("[^\\p{L}\\p{N}]+")
+    private val parens = Regex("\\([^)]*\\)")
+    private fun nameKey(kind: String, name: String) = kind + "|" + name.lowercase().replace(parens, "").replace(nonWord, "")
+
+    /** The server's copy of a title it has no IMDb id for: matched by name (and year when known). */
+    private fun byName(type: String, imdbId: String): String? {
+        val m = Repo.cachedMeta(type, imdbId) ?: return null
+        val k = nameKey(if (type == "movie") "movie" else "series", m.name)
+        val year = m.releaseInfo?.take(4)?.toIntOrNull()
+        return synchronized(imdbToEmby) { year?.let { nameToEmby["$k|$it"] } ?: nameToEmby[k] }
+    }
     private val embyToImdb = HashMap<String, String>()
     private var indexedAt = 0L
 
@@ -340,20 +353,28 @@ object Emby {
         if (!connected) return
         if (!force && System.currentTimeMillis() - indexedAt < 30 * 60_000 && imdbToEmby.isNotEmpty()) return
         val items = getObj(
-            "/Users/$userId/Items?Recursive=true&IncludeItemTypes=Movie,Series&Fields=ProviderIds" +
+            "/Users/$userId/Items?Recursive=true&IncludeItemTypes=Movie,Series&Fields=ProviderIds,ProductionYear" +
                 "&EnableImages=false&EnableUserData=false&Limit=20000",
         )?.arr("Items").objects()
         if (items.isEmpty()) return
         withContext(Dispatchers.Default) {
-            val a = HashMap<String, String>(); val b = HashMap<String, String>()
+            val a = HashMap<String, String>(); val b = HashMap<String, String>(); val n = HashMap<String, String>()
             items.forEach { o ->
                 val id = o.str("Id") ?: return@forEach
+                // By name too, for titles the server has no IMDb id for.
+                val kind = if (o.str("Type") == "Movie") "movie" else "series"
+                o.str("Name")?.let { name ->
+                    val k = nameKey(kind, name)
+                    n.putIfAbsent(k, id)
+                    o.int("ProductionYear")?.let { y -> n["$k|$y"] = id }
+                }
                 val tt = imdbOf(o) ?: return@forEach
                 a[tt] = id; b[id] = tt
             }
             synchronized(imdbToEmby) {
                 imdbToEmby.clear(); imdbToEmby.putAll(a)
                 embyToImdb.clear(); embyToImdb.putAll(b)
+                nameToEmby.clear(); nameToEmby.putAll(n)
             }
         }
         indexedAt = System.currentTimeMillis()
@@ -552,7 +573,8 @@ object Emby {
         if (!connected) return emptyList()
         if (isEmby(videoId)) return streams(videoId)
         val p = videoId.split(":")
-        val embyTitle = synchronized(imdbToEmby) { imdbToEmby[p[0]] } ?: return emptyList()
+        if (synchronized(imdbToEmby) { imdbToEmby.isEmpty() }) buildIndex()
+        val embyTitle = synchronized(imdbToEmby) { imdbToEmby[p[0]] } ?: byName(type, p[0]) ?: return emptyList()
         if (type == "movie" || p.size < 3) return streams(PREFIX + embyTitle)
         val key = "${p[p.size - 2]}:${p[p.size - 1]}"
         val eps = episodeIndex[embyTitle] ?: run {
@@ -572,7 +594,7 @@ object Emby {
 
     /** Forget everything about the previous profile's server. */
     fun reset() {
-        synchronized(imdbToEmby) { imdbToEmby.clear(); embyToImdb.clear() }
+        synchronized(imdbToEmby) { imdbToEmby.clear(); embyToImdb.clear(); nameToEmby.clear() }
         indexedAt = 0
         userData.clear(); introKeys.clear(); episodeIndex.clear(); started.clear()
     }

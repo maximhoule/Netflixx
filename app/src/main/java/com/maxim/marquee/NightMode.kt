@@ -80,3 +80,57 @@ class NightModeProcessor : BaseAudioProcessor() {
         envelope = 0f
     }
 }
+
+/**
+ * Decoded 5.1 / 7.1 sound folded to stereo by the app instead of by Android. Android's own
+ * downmix lowers the level a lot to be safe (dialogue ends up quiet on TV speakers); this one keeps
+ * the voices at full level (centre channel into both sides), adds the surrounds, and uses a soft
+ * limiter instead of turning everything down, so loud scenes don't distort.
+ */
+@OptIn(UnstableApi::class)
+class StereoDownmixProcessor : BaseAudioProcessor() {
+    @Volatile
+    var enabled = true
+
+    override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
+        val ch = inputAudioFormat.channelCount
+        if (!enabled || inputAudioFormat.encoding != C.ENCODING_PCM_16BIT || (ch != 6 && ch != 8)) {
+            return AudioProcessor.AudioFormat.NOT_SET
+        }
+        return AudioProcessor.AudioFormat(inputAudioFormat.sampleRate, 2, C.ENCODING_PCM_16BIT)
+    }
+
+    private fun soft(x: Float): Float {
+        val a = abs(x)
+        if (a <= 0.85f) return x
+        // Above 85 %: bend smoothly towards full scale instead of clipping.
+        val over = (a - 0.85f) / 0.15f
+        val y = 0.85f + 0.15f * (over / (1f + over))
+        return if (x < 0) -y else y
+    }
+
+    override fun queueInput(inputBuffer: ByteBuffer) {
+        val ch = inputAudioFormat.channelCount
+        val frames = inputBuffer.remaining() / (2 * ch)
+        if (frames == 0) return
+        val out = replaceOutputBuffer(frames * 4)
+        val input = inputBuffer.order(ByteOrder.nativeOrder())
+        val f = FloatArray(ch)
+        // Android / FFmpeg order: FL, FR, FC, LFE, BL, BR (, SL, SR).
+        repeat(frames) {
+            for (c in 0 until ch) f[c] = input.short / 32768f
+            val centre = 0.707f * f[2]
+            val lfe = 0.3f * f[3]
+            var l = f[0] + centre + lfe + 0.6f * f[4]
+            var r = f[1] + centre + lfe + 0.6f * f[5]
+            if (ch == 8) {
+                l += 0.6f * f[6]
+                r += 0.6f * f[7]
+            }
+            out.putShort((soft(l) * 32767f).toInt().toShort())
+            out.putShort((soft(r) * 32767f).toInt().toShort())
+        }
+        while (input.hasRemaining()) input.get()
+        out.flip()
+    }
+}

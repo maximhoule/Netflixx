@@ -245,6 +245,14 @@ object Store {
         get() = bool("showRecaps", false)
         set(v) = setBool("showRecaps", v)
 
+    /**
+     * Decoded surround (5.1 / 7.1) folded to stereo by the app, with full-level dialogue: louder and
+     * clearer on TV speakers. Off keeps every channel (for a receiver taking multichannel sound).
+     */
+    var stereoDownmix: Boolean
+        get() = bool("stereoDownmix", true)
+        set(v) = setBool("stereoDownmix", v)
+
     /** Send Dolby / DTS audio untouched to the TV or soundbar when it supports it (otherwise decoded here). */
     /**
      * DTS and Dolby TrueHD are converted here (to regular multichannel sound) instead of being sent

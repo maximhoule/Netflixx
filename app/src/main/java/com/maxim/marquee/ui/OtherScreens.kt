@@ -515,6 +515,10 @@ fun SettingsScreen(model: AppModel) {
             "DTS & TrueHD audio", if (Store.convertDts) "Convert here" else "Pass through if supported",
             "Convert plays them as surround sound on any TV. Pass through sends them untouched (lossless, DTS:X / Atmos) to a receiver that supports them",
         ) { Store.convertDts = !Store.convertDts; version++ }
+        SettingRow(
+            "Surround sound", if (Store.stereoDownmix) "Stereo (TV speakers)" else "Keep all channels",
+            "Stereo folds 5.1 / 7.1 into two channels with full-level voices (louder on a TV). Keep all channels for a receiver",
+        ) { Store.stereoDownmix = !Store.stereoDownmix; version++ }
         SettingRow("Night mode", onOff(Store.nightMode), "Evens out loud and quiet scenes and lifts voices · also in the player's audio menu") {
             Store.nightMode = !Store.nightMode; version++
         }

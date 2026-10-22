@@ -250,6 +250,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
     private var prefSubLang = ""
     private var prefSubsOn = false
     private val nightMode = NightModeProcessor()
+    private val downmix = StereoDownmixProcessor().apply { enabled = Store.stereoDownmix }
     /** Set after the TV/soundbar refused Dolby/DTS passthrough: decode audio in the app instead. */
     private var forcePcm = false
     private var passthroughActive = false
@@ -301,7 +302,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
                 }
                 return b.setEnableFloatOutput(false)
                     .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-                    .setAudioProcessors(arrayOf(nightMode))
+                    .setAudioProcessors(arrayOf(downmix, nightMode))
                     .build()
             }
         }

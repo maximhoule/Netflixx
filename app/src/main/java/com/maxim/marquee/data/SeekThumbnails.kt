@@ -71,7 +71,29 @@ sealed class SeekThumbnails {
                 }
             }
 
-        private fun grab(ms: Long): Bitmap? = try {
+        /** Our own decoder (software, so the TV box's hardware decoder can't hand back black). */
+        private var soft: SoftFrames? = null
+        private var softFailed = false
+
+        private fun grab(ms: Long): Bitmap? {
+            if (!softFailed) {
+                try {
+                    val d = soft ?: SoftFrames(url, headers).also { soft = it }
+                    var b = d.frameAt(ms * 1000)
+                    // A fade to black: the next keyframe a few seconds on.
+                    if (b != null && isBlack(b)) b = d.frameAt(ms * 1000 + 4_000_000) ?: b
+                    if (b != null) return b
+                } catch (e: Throwable) {
+                    android.util.Log.w("Marquee", "seek previews: own decoder unavailable (${e.javaClass.simpleName}: ${e.message?.take(80)}), trying the system one")
+                    softFailed = true
+                    runCatching { soft?.release() }
+                    soft = null
+                }
+            }
+            return grabSystem(ms)
+        }
+
+        private fun grabSystem(ms: Long): Bitmap? = try {
             val r = retriever ?: android.media.MediaMetadataRetriever().also {
                 it.setDataSource(url, headers)
                 retriever = it
@@ -102,7 +124,119 @@ sealed class SeekThumbnails {
         override fun release() {
             val r = retriever
             retriever = null
-            if (r != null) Thread { runCatching { r.release() } }.start()
+            val d = soft
+            soft = null
+            Thread {
+                runCatching { r?.release() }
+                runCatching { d?.release() }
+            }.start()
+        }
+    }
+
+    /**
+     * Decodes single frames of a video file with a software decoder: seek to the keyframe before a
+     * position, decode it, scale it down to a 384-pixel-wide picture. Kept open between requests.
+     */
+    private class SoftFrames(url: String, headers: Map<String, String>) {
+        private val extractor = android.media.MediaExtractor()
+        private val codec: android.media.MediaCodec
+        private var started = false
+
+        init {
+            extractor.setDataSource(url, headers)
+            val track = (0 until extractor.trackCount).firstOrNull {
+                extractor.getTrackFormat(it).getString(android.media.MediaFormat.KEY_MIME)?.startsWith("video/") == true
+            } ?: throw IllegalStateException("no video track")
+            extractor.selectTrack(track)
+            val format = extractor.getTrackFormat(track)
+            val mime = format.getString(android.media.MediaFormat.KEY_MIME)!!
+            val info = android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.firstOrNull { ci ->
+                !ci.isEncoder && ci.supportedTypes.any { it.equals(mime, true) } &&
+                    if (android.os.Build.VERSION.SDK_INT >= 29) ci.isSoftwareOnly
+                    else ci.name.startsWith("OMX.google.") || ci.name.startsWith("c2.android.")
+            } ?: throw IllegalStateException("no software decoder for $mime")
+            format.setInteger(
+                android.media.MediaFormat.KEY_COLOR_FORMAT,
+                android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible,
+            )
+            codec = android.media.MediaCodec.createByCodecName(info.name)
+            try {
+                codec.configure(format, null, null, 0)
+                codec.start()
+            } catch (e: Throwable) {
+                codec.release(); extractor.release(); throw e
+            }
+        }
+
+        fun frameAt(us: Long): Bitmap? {
+            extractor.seekTo(us, android.media.MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+            if (started) codec.flush()
+            started = true
+            val info = android.media.MediaCodec.BufferInfo()
+            var inputDone = false
+            val deadline = System.currentTimeMillis() + 6_000
+            while (System.currentTimeMillis() < deadline) {
+                if (!inputDone) {
+                    val i = codec.dequeueInputBuffer(5_000)
+                    if (i >= 0) {
+                        val buf = codec.getInputBuffer(i)!!
+                        val n = extractor.readSampleData(buf, 0)
+                        if (n < 0) {
+                            codec.queueInputBuffer(i, 0, 0, 0, android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            inputDone = true
+                        } else {
+                            codec.queueInputBuffer(i, 0, n, extractor.sampleTime, 0)
+                            extractor.advance()
+                        }
+                    }
+                }
+                val o = codec.dequeueOutputBuffer(info, 5_000)
+                if (o >= 0) {
+                    val img = codec.getOutputImage(o)
+                    val bmp = try { img?.let { toBitmap(it) } } finally { img?.close() }
+                    codec.releaseOutputBuffer(o, false)
+                    if (bmp != null) return bmp
+                    // e.g. 10-bit HDR pictures: not something this converter reads.
+                    if (img != null) throw IllegalStateException("picture format ${img.format}")
+                    if (info.flags and android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) return null
+                }
+            }
+            return null
+        }
+
+        /** YUV 4:2:0 → a small RGB picture (samples the pixels it needs; no full-size copy). */
+        private fun toBitmap(img: android.media.Image): Bitmap? {
+            if (img.format != android.graphics.ImageFormat.YUV_420_888 || img.planes.size < 3) return null
+            val crop = img.cropRect
+            val w = crop.width().coerceAtLeast(1)
+            val h = crop.height().coerceAtLeast(1)
+            val tw = 384
+            val th = (tw * h / w).coerceIn(1, 384)
+            val (yP, uP, vP) = Triple(img.planes[0], img.planes[1], img.planes[2])
+            val yb = yP.buffer; val ub = uP.buffer; val vb = vP.buffer
+            val px = IntArray(tw * th)
+            for (ty in 0 until th) {
+                val sy = crop.top + ty * h / th
+                for (tx in 0 until tw) {
+                    val sx = crop.left + tx * w / tw
+                    val y = (yb.get(sy * yP.rowStride + sx * yP.pixelStride).toInt() and 0xff) - 16
+                    val ci = (sy / 2) * uP.rowStride + (sx / 2) * uP.pixelStride
+                    val u = (ub.get(ci).toInt() and 0xff) - 128
+                    val v = (vb.get((sy / 2) * vP.rowStride + (sx / 2) * vP.pixelStride).toInt() and 0xff) - 128
+                    val c = 298 * y.coerceAtLeast(0)
+                    val r = ((c + 409 * v + 128) shr 8).coerceIn(0, 255)
+                    val g = ((c - 100 * u - 208 * v + 128) shr 8).coerceIn(0, 255)
+                    val b = ((c + 516 * u + 128) shr 8).coerceIn(0, 255)
+                    px[ty * tw + tx] = (0xff shl 24) or (r shl 16) or (g shl 8) or b
+                }
+            }
+            return Bitmap.createBitmap(px, tw, th, Bitmap.Config.ARGB_8888)
+        }
+
+        fun release() {
+            runCatching { codec.stop() }
+            runCatching { codec.release() }
+            runCatching { extractor.release() }
         }
     }
 

@@ -40,7 +40,11 @@ adb shell restorecon -R /data/data/$PKG/shared_prefs
 
 adb logcat -c
 summary "== cold start (first ever: nothing saved yet)"
-adb shell am start -W -n $PKG/.MainActivity | grep -E "TotalTime" | tee -a "$OUT/summary.txt"
+summary "before start: device $(timeout 10 adb get-state 2>&1)"
+timeout 60 adb shell am start -W -n $PKG/.MainActivity > "$OUT/am_start.txt" 2>&1
+grep -E "TotalTime|Error|Status" "$OUT/am_start.txt" | tee -a "$OUT/summary.txt"
+summary "after start: device $(timeout 10 adb get-state 2>&1), app pid $(timeout 10 adb shell pidof $PKG 2>&1)"
+timeout 30 adb logcat -d > "$OUT/logcat_start.txt" 2>&1
 sleep 3; shot start_3s
 sleep 15; shot home
 # Resting on the first title: its trailer should start behind the billboard after ~2 s.

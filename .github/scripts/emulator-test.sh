@@ -121,7 +121,7 @@ measure_end player_ui
 adb shell dumpsys meminfo $PKG | grep -E "TOTAL PSS|TOTAL:|Java Heap|Native Heap|Graphics" | head -6 | sed 's/^/player memory: /' | tee -a "$OUT/summary.txt"
 key BACK; sleep 3; shot after_player
 
-summary "== seek previews on a plain video file (pictures taken from the file)"
+summary "== plain video file (MP4)"
 adb shell am start -n $PKG/.PlayerActivity \
   --es url "https://raw.githubusercontent.com/maximhoule/Netflixx/main/.github/scripts/test-video.mp4" --es type movie \
   --es metaId tt1254207 --es videoId tt1254207 --es name "Big\ Buck\ Bunny" --es streamName "MP4" >/dev/null

@@ -213,11 +213,8 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         }
 
         if (type == "series") lifecycleScope.launch { segments = Repo.segments(videoId) }
-        // Preview pictures while skipping: your server's ready-made ones, else taken from the video itself.
-        lifecycleScope.launch {
-            thumbs = embyId?.let { com.maxim.marquee.data.Emby.seekThumbnails(it) }
-                ?: if (!url.contains(".m3u8", ignoreCase = true)) com.maxim.marquee.data.SeekThumbnails.Extracted(url, httpHeaders) else null
-        }
+        // Preview pictures while skipping: only your server's ready-made ones (Emby / Jellyfin).
+        embyId?.let { id -> lifecycleScope.launch { thumbs = com.maxim.marquee.data.Emby.seekThumbnails(id) } }
 
         lifecycleScope.launch { ticker() }
         lifecycleScope.launch {

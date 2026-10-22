@@ -123,7 +123,7 @@ key BACK; sleep 3; shot after_player
 
 summary "== seek previews on a plain video file (pictures taken from the file)"
 adb shell am start -n $PKG/.PlayerActivity \
-  --es url "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" --es type movie \
+  --es url "https://raw.githubusercontent.com/maximhoule/Netflixx/main/.github/scripts/test-video.mp4" --es type movie \
   --es metaId tt1254207 --es videoId tt1254207 --es name "Big\ Buck\ Bunny" --es streamName "MP4" >/dev/null
 sleep 15; key DPAD_RIGHT; sleep 0.2; key DPAD_RIGHT DPAD_RIGHT; sleep 3; shot seek_preview
 key BACK; sleep 3

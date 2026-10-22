@@ -50,6 +50,11 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -115,8 +120,18 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
     }
     // Focus below the actions (tabs, seasons, episodes): the top shrinks to one title line.
     var browsing by remember(s) { mutableStateOf(false) }
-    // Back while browsing the episodes goes back up to the actions first.
-    BackHandler(enabled = browsing) { runCatching { playFr.requestFocus() } }
+    // Back (or Up from the tabs) while browsing goes back up to the actions. The Play button only
+    // exists in the full header, so expand it first, then focus it once it's on screen.
+    var toActions by remember(s) { mutableStateOf(0) }
+    LaunchedEffect(toActions) {
+        if (toActions == 0) return@LaunchedEffect
+        browsing = false
+        repeat(3) {
+            withFrameNanos { }
+            if (runCatching { playFr.requestFocus() }.isSuccess) return@LaunchedEffect
+        }
+    }
+    BackHandler(enabled = browsing) { toActions++ }
 
     Box(Modifier.fillMaxSize().background(C.Bg)) {
         Backdrop(meta.background ?: s.preview.backdropUrl, Modifier.align(Alignment.TopEnd).fillMaxWidth(0.78f).fillMaxHeight())
@@ -181,7 +196,14 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
                 ) {
                     Spacer(Modifier.height(if (browsing) 14.dp else 22.dp))
                     // Tabs: moving onto one shows it.
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        Modifier.onPreviewKeyEvent { e ->
+                            if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionUp) {
+                                toActions++; true
+                            } else false
+                        },
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
                         tabs.forEach { t ->
                             TabChip(
                                 label = when (t) {

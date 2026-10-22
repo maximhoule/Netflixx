@@ -175,7 +175,7 @@ fun Rail(model: AppModel, requesters: Map<Tab, FocusRequester>) {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Composable
 fun BrowseScreen(model: AppModel, b: BrowseState, active: Boolean = true) {
     // Shown again (back from a show's page, or this tab picked again): focus where you left off.
@@ -228,7 +228,15 @@ fun BrowseScreen(model: AppModel, b: BrowseState, active: Boolean = true) {
                 CompositionLocalProvider(LocalBringIntoViewSpec provides colSpec) {
                     LazyColumn(
                         state = b.columnState,
-                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        modifier = Modifier.fillMaxWidth().weight(1f)
+                            // Coming in from the menu: the card you were on (else the first one),
+                            // not whichever card happens to sit next to the menu item.
+                            .focusProperties {
+                                enter = {
+                                    (b.lastFocusKey ?: b.firstKey())?.let { b.cardRequesters[it] } ?: FocusRequester.Default
+                                }
+                            }
+                            .focusGroup(),
                         contentPadding = PaddingValues(bottom = 300.dp),
                     ) {
                         items(b.rows, key = { it.key }) { row ->
@@ -356,6 +364,10 @@ fun CatalogRow(
                     itemsIndexed(items, key = { i, it -> "$i|${it.meta.id}" }) { i, item ->
                         val key = "${row.key}#$i"
                         val fr = remember { FocusRequester() }
+                        DisposableEffect(key) {
+                            b.cardRequesters[key] = fr
+                            onDispose { if (b.cardRequesters[key] === fr) b.cardRequesters.remove(key) }
+                        }
                         // Only the card that should take focus runs this (not one task per card).
                         if (b.pendingFocusKey == key) {
                             LaunchedEffect(key) {

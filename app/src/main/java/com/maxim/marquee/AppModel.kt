@@ -123,6 +123,8 @@ class BrowseState(val type: String?, val withContinue: Boolean, val sportsOnly: 
     var heroJob: Job? = null
     var lastFocusKey: String? = null
     var pendingFocusKey by mutableStateOf<String?>(null)
+    /** Focus handles of the cards on screen, by "row#index", so focus coming in from the menu lands on the right one. */
+    val cardRequesters = HashMap<String, androidx.compose.ui.focus.FocusRequester>()
     var signature = ""
 
     /**

@@ -38,19 +38,59 @@ sealed class SeekThumbnails {
             }
         }
 
+        private var blackInARow = 0
+
+        /** Mostly black (a fade, or a TV box decoder that can't hand pictures back). */
+        private fun isBlack(b: Bitmap): Boolean {
+            var bright = 0
+            var n = 0
+            val stepX = (b.width / 12).coerceAtLeast(1)
+            val stepY = (b.height / 8).coerceAtLeast(1)
+            var y = stepY / 2
+            while (y < b.height) {
+                var x = stepX / 2
+                while (x < b.width) {
+                    val c = b.getPixel(x, y)
+                    val l = (android.graphics.Color.red(c) * 3 + android.graphics.Color.green(c) * 6 + android.graphics.Color.blue(c)) / 10
+                    if (l > 24) bright++
+                    n++
+                    x += stepX
+                }
+                y += stepY
+            }
+            return n > 0 && bright * 10 < n // under 10% of the samples lit
+        }
+
+        private fun frameAt(r: android.media.MediaMetadataRetriever, us: Long, option: Int): Bitmap? =
+            if (android.os.Build.VERSION.SDK_INT >= 27) {
+                r.getScaledFrameAtTime(us, option, 384, 216)
+            } else {
+                r.getFrameAtTime(us, option)?.let { b ->
+                    val h = 216; val w = (b.width * h / b.height.coerceAtLeast(1)).coerceAtLeast(1)
+                    Bitmap.createScaledBitmap(b, w, h, true).also { if (it != b) b.recycle() }
+                }
+            }
+
         private fun grab(ms: Long): Bitmap? = try {
             val r = retriever ?: android.media.MediaMetadataRetriever().also {
                 it.setDataSource(url, headers)
                 retriever = it
             }
             val us = ms * 1000
-            if (android.os.Build.VERSION.SDK_INT >= 27) {
-                r.getScaledFrameAtTime(us, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 384, 216)
-            } else {
-                r.getFrameAtTime(us, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)?.let { b ->
-                    val h = 216; val w = (b.width * h / b.height.coerceAtLeast(1)).coerceAtLeast(1)
-                    Bitmap.createScaledBitmap(b, w, h, true).also { if (it != b) b.recycle() }
+            val M = android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC
+            // A black picture: try the next keyframe a few seconds on (a scene fade), and never
+            // show a black box. Black every time = this box can't make previews for this video.
+            var b = frameAt(r, us, M)
+            if (b != null && isBlack(b)) b = frameAt(r, us + 4_000_000, android.media.MediaMetadataRetriever.OPTION_NEXT_SYNC)
+            if (b != null && isBlack(b)) {
+                if (++blackInARow >= 3) {
+                    android.util.Log.w("Marquee", "seek previews: frames come back black; turned off for this video")
+                    failed = true
                 }
+                null
+            } else {
+                if (b != null) blackInARow = 0
+                b
             }
         } catch (e: Throwable) {
             // Not a format the TV can open this way (e.g. a live stream): no previews for this video.

@@ -308,6 +308,17 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             }
         }
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+            // TV boxes often ship a DTS / TrueHD decoder that "works" but only outputs silence
+            // (no licence). With conversion on, those are skipped so the app's own FFmpeg decoder
+            // handles them.
+            .setMediaCodecSelector { mime, secure, tunneling ->
+                val m = mime.lowercase()
+                if (Store.convertDts && (m.startsWith("audio/vnd.dts") || m == "audio/true-hd" || m == "audio/mlp")) {
+                    emptyList()
+                } else {
+                    androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT.getDecoderInfos(mime, secure, tunneling)
+                }
+            }
             .setEnableDecoderFallback(true)
 
         val trackSelector = DefaultTrackSelector(this)

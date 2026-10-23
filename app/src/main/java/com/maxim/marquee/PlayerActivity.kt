@@ -137,6 +137,8 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
     /** HTTP status of the failure that ended playback (401/403 = the service refused). */
     private var httpCode = 0
     private var autoSkipped = HashSet<Long>()
+    /** Intro / recap segments (by start) already skipped, by the button or by hand: no button again. */
+    private val handled = HashSet<Long>()
     private var nextDismissed = false
     private var countdownAt = 0L
     private var frameRateApplied = false
@@ -624,7 +626,8 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
                 seg?.intro?.let { "Skip Intro" to it },
                 seg?.recap?.let { "Skip Recap" to it },
             ).filter { (_, s) -> dur <= 0 || s.endMs < dur } // timings past the end belong to another cut
-            val hit = segs.firstOrNull { (_, s) -> pos >= s.startMs && pos < s.endMs - 1_500 }
+            // A segment you've already moved through yourself (skipped by hand) stays quiet.
+            val hit = segs.firstOrNull { (_, s) -> s.startMs !in handled && pos >= s.startMs && pos < s.endMs - 1_500 }
             val active = hit?.let { (label, s) -> Triple(label, s.startMs, s.endMs) }
             // Only trusted timings skip by themselves; unsure ones just offer the button.
             if (active != null && Store.autoSkipIntro && hit.second.sure && autoSkipped.add(active.second)) {
@@ -785,7 +788,16 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
 
     override fun seekBy(ms: Long) {
         val dur = player.duration.takeIf { it > 0 && it != C.TIME_UNSET } ?: Long.MAX_VALUE
-        val target = (player.currentPosition + ms).coerceIn(0, dur)
+        val from = player.currentPosition
+        val target = (from + ms).coerceIn(0, dur)
+        // Fast-forwarding by hand into or through an intro/recap: you're skipping it yourself,
+        // so no "Skip Intro" button (or automatic skip) for it afterwards.
+        if (ms > 0) {
+            listOfNotNull(segments?.intro, segments?.recap).forEach { sg ->
+                if (target > sg.startMs && from < sg.endMs) handled += sg.startMs
+            }
+            if (ui.skip != null) ui.skip = null
+        }
         player.seekTo(target)
         ui.position = target
         if (!ui.controls) flash((if (ms < 0) "◀◀  " else "▶▶  ") + formatTime(target))
@@ -805,6 +817,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
 
     override fun skip() {
         val s = ui.skip ?: return
+        listOfNotNull(segments?.intro, segments?.recap).firstOrNull { it.endMs == s.second }?.let { handled += it.startMs }
         player.seekTo(s.second)
         ui.skip = null
     }

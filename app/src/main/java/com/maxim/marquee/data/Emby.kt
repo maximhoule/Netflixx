@@ -327,6 +327,7 @@ object Emby {
 
     /** IMDb id ⇄ Emby id for every movie and series on the server. */
     private val imdbToEmby = HashMap<String, String>()
+    private val episodeSpans = java.util.concurrent.ConcurrentHashMap<String, IntRange>()
     private val nameToEmby = HashMap<String, String>()
 
     private val nonWord = Regex("[^\\p{L}\\p{N}]+")
@@ -583,13 +584,19 @@ object Emby {
             list.forEach { e ->
                 remember(e)
                 val sn = e.int("ParentIndexNumber"); val en = e.int("IndexNumber"); val id = e.str("Id")
-                if (sn != null && en != null && id != null) m["$sn:$en"] = id
+                if (sn != null && en != null && id != null) {
+                    // A double episode ("S04E03-E04" as one file): both numbers lead to it.
+                    val end = e.int("IndexNumberEnd")?.takeIf { it > en && it - en <= 3 }
+                    for (n in en..(end ?: en)) m.putIfAbsent("$sn:$n", id)
+                    if (end != null) episodeSpans[id] = en..end
+                }
             }
             episodeIndex[embyTitle] = m
             m
         }
         val epId = eps[key] ?: return emptyList()
-        return streams(PREFIX + epId)
+        val span = episodeSpans[epId]
+        return streams(PREFIX + epId).map { if (span != null) it.copy(span = span) else it }
     }
 
     /** Forget everything about the previous profile's server. */

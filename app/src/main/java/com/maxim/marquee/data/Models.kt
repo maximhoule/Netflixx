@@ -267,10 +267,30 @@ data class StreamItem(
     val subtitles: List<SubTrack>,
     /** Set when this source is your Emby server; progress is reported there too. */
     val embyId: String? = null,
+    /** The file's name, when the addon gives it. */
+    val fileName: String? = null,
+    /** Episodes this one file holds when it's a double episode (e.g. 3..4), known from the server. */
+    val span: IntRange? = null,
 ) {
     val quality: Quality by lazy { Quality.parse("$name $title") }
 
+    /**
+     * Episodes in this file: from the server, or read from the name ("S04E03-E04", "S04E03E04",
+     * "S04E03-04"). Null for a normal single-episode file.
+     */
+    val episodeSpan: IntRange? by lazy {
+        span ?: run {
+            val text = "$name $title ${fileName ?: ""}"
+            val m = MULTI_EP.find(text) ?: return@run null
+            val a = m.groupValues[2].toIntOrNull() ?: return@run null
+            val b = (m.groupValues[3].ifEmpty { m.groupValues[4] }).toIntOrNull() ?: return@run null
+            if (b > a && b - a <= 3) a..b else null
+        }
+    }
+
     companion object {
+        private val MULTI_EP = Regex("(?i)\\bS(\\d{1,2})[ ._]?E(\\d{1,3})(?:[-_ .]?E(\\d{1,3})|-(\\d{1,3})(?![\\dp]))")
+
         fun parse(o: JSONObject, addonName: String): StreamItem? {
             val url = o.str("url") ?: return null // torrent-only (infoHash) streams need a debrid addon
             if (!url.startsWith("http")) return null
@@ -284,6 +304,7 @@ data class StreamItem(
                 url = url,
                 headers = headers,
                 subtitles = o.arr("subtitles").objects().mapNotNull { SubTrack.parse(it, addonName) },
+                fileName = o.obj("behaviorHints")?.str("filename"),
             )
         }
     }

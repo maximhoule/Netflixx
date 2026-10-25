@@ -123,6 +123,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
     private var outcomeVideo: String? = null
     private var outcomeAuto = false
     private var netRetries = 0
+    private var partSeek: Float? = null
     private var stableJob: Job? = null
     private var forceHls = false
     private var started = false
@@ -169,6 +170,10 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             }
         }.getOrDefault(emptyList())
         val start = intent.getLongExtra("start", 0)
+        // Part 2 of a double-episode file, starting fresh: jump to its half once the length is known.
+        val part = intent.getIntExtra("part", 0)
+        val parts = intent.getIntExtra("parts", 1)
+        if (start <= 0 && part > 0 && parts > 1) partSeek = part.toFloat() / parts
 
         val headers = mutableMapOf<String, String>()
         runCatching {
@@ -416,6 +421,13 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         override fun onPlaybackStateChanged(state: Int) {
             ui.buffering = state == Player.STATE_BUFFERING || (state == Player.STATE_IDLE && !started)
             if (state == Player.STATE_READY) {
+                partSeek?.let { f ->
+                    val d = player.duration
+                    if (d > 0 && d != C.TIME_UNSET) {
+                        partSeek = null
+                        player.seekTo((d * f).toLong())
+                    }
+                }
                 started = true
                 // Playing smoothly again: the next network drop gets the full set of reconnects.
                 stableJob?.cancel()

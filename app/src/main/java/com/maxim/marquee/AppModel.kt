@@ -1145,7 +1145,12 @@ class AppModel(private val activity: MainActivity) {
         // Episode list + next episode for the player's Episodes panel and "Next Episode" card.
         val meta = if (p.req.type == "series") Repo.meta(p.req.type, p.req.metaId) else null
         val current = meta?.videos?.firstOrNull { it.id == p.req.videoId }
-        val next = meta?.let { nextVideo(it, p.req.videoId) }
+        // A double-episode file (e.g. S04E03-E04 as one hour): part 2 starts halfway in, and the
+        // next episode is the one after the whole file.
+        val span = s.episodeSpan?.takeIf { current != null && current.episode in it }
+        val part = span?.let { current!!.episode - it.first } ?: 0
+        val parts = span?.let { it.last - it.first + 1 } ?: 1
+        val next = meta?.let { m -> nextVideo(m, lastOfSpan(m, current, span) ?: p.req.videoId) }
         val season = meta?.let { m -> sortedEpisodes(m).filter { it.season == (current?.season ?: it.season) } } ?: emptyList()
         if (!coroutineContext.isActive) return
         loading = null
@@ -1168,7 +1173,16 @@ class AppModel(private val activity: MainActivity) {
             return
         }
         pending = p
-        activity.playerLauncher.launch(PlayerActivity.intent(activity, p.req, s, subs, start, next, season, p.autoChain))
+        activity.playerLauncher.launch(
+            PlayerActivity.intent(activity, p.req, s, subs, start, next, season, p.autoChain)
+                .putExtra("part", part).putExtra("parts", parts),
+        )
+    }
+
+    /** The id of the last episode a double-episode file covers (same season), else null. */
+    private fun lastOfSpan(meta: MetaItem, current: Video?, span: IntRange?): String? {
+        if (current == null || span == null) return null
+        return meta.videos.firstOrNull { it.season == current.season && it.episode == span.last }?.id
     }
 
     /** After an episode finishes, Continue Watching points at the next one ("Up Next"). */
@@ -1208,7 +1222,17 @@ class AppModel(private val activity: MainActivity) {
         scope.launch {
             // Finished an episode? Line up the next one in Continue Watching.
             if (p.req.type == "series" && (outcome == "ended" || outcome == "next" || watched(p.req.metaId, p.req.videoId))) {
-                Repo.meta(p.req.type, p.req.metaId)?.let { m -> nextVideo(m, p.req.videoId)?.let { markUpNext(p.req, it) } }
+                Repo.meta(p.req.type, p.req.metaId)?.let { m ->
+                    // A double-episode file: every part counts as watched, up next is after the file.
+                    val cur = m.videos.firstOrNull { it.id == p.req.videoId }
+                    val span = p.streams.getOrNull(p.index)?.episodeSpan?.takeIf { cur != null && cur.episode in it }
+                    if (span != null && cur != null) {
+                        m.videos.filter { it.season == cur.season && it.episode in span && it.episode > cur.episode }.forEach { v ->
+                            Store.saveProgress(LocalProgress(p.req.metaId, p.req.type, p.req.name, p.req.poster, v.id, 1, 1, System.currentTimeMillis() - 1))
+                        }
+                    }
+                    nextVideo(m, lastOfSpan(m, cur, span) ?: p.req.videoId)?.let { markUpNext(p.req, it) }
+                }
             }
             refreshContinue()
             delay(1500)

@@ -328,6 +328,8 @@ object Emby {
     /** IMDb id ⇄ Emby id for every movie and series on the server. */
     private val imdbToEmby = HashMap<String, String>()
     private val episodeSpans = java.util.concurrent.ConcurrentHashMap<String, IntRange>()
+    private data class EpRec(val season: Int, val episode: Int, val id: String, val name: String)
+    private val episodeRecs = java.util.concurrent.ConcurrentHashMap<String, List<EpRec>>()
     private val nameToEmby = HashMap<String, String>()
 
     private val nonWord = Regex("[^\\p{L}\\p{N}]+")
@@ -581,9 +583,11 @@ object Emby {
         val eps = episodeIndex[embyTitle] ?: run {
             val list = getObj("/Shows/$embyTitle/Episodes?UserId=$userId&Fields=RunTimeTicks")?.arr("Items").objects()
             val m = HashMap<String, String>()
+            val recs = ArrayList<EpRec>()
             list.forEach { e ->
                 remember(e)
                 val sn = e.int("ParentIndexNumber"); val en = e.int("IndexNumber"); val id = e.str("Id")
+                if (sn != null && en != null && id != null) recs += EpRec(sn, en, id, e.str("Name") ?: "")
                 if (sn != null && en != null && id != null) {
                     // A double episode ("S04E03-E04" as one file): both numbers lead to it.
                     val end = e.int("IndexNumberEnd")?.takeIf { it > en && it - en <= 3 }
@@ -592,18 +596,40 @@ object Emby {
                 }
             }
             episodeIndex[embyTitle] = m
+            episodeRecs[embyTitle] = recs
             m
         }
-        val epId = eps[key] ?: return emptyList()
-        val span = episodeSpans[epId]
-        return streams(PREFIX + epId).map { if (span != null) it.copy(span = span) else it }
+        var epId = eps[key]
+        var span = epId?.let { episodeSpans[it] }
+        // Numbers can differ between the episode list and your server (two-part episodes merged
+        // into one, another season order): check by title, and follow the title when they disagree.
+        val want = Repo.cachedMeta(type, p[0])?.let { m -> m.videos.firstOrNull { it.id == videoId }?.let { m to it } }
+        if (want != null) {
+            val (meta, v) = want
+            val recs = episodeRecs[embyTitle].orEmpty()
+            val base = Episodes.baseTitle(v.title)
+            val numbered = recs.firstOrNull { it.id == epId }
+            if (base.length >= 3 && (numbered == null || Episodes.baseTitle(numbered.name) != base)) {
+                recs.filter { Episodes.baseTitle(it.name) == base }
+                    .minByOrNull { (if (it.season == v.season) 0 else 1_000) + kotlin.math.abs(it.episode - v.episode) }
+                    ?.let { epId = it.id; span = episodeSpans[it.id] }
+            }
+            // One file on the server for a story the list splits in parts ("Name" vs "Name (1)", "Name (2)").
+            val rec = recs.firstOrNull { it.id == epId }
+            val group = Episodes.partGroup(meta.videos, v)
+            if (span == null && rec != null && group.size > 1 && !Episodes.hasPart(rec.name) && Episodes.baseTitle(rec.name) == base) {
+                span = group.first().episode..group.last().episode
+            }
+        }
+        val id = epId ?: return emptyList()
+        return streams(PREFIX + id).map { if (span != null) it.copy(span = span) else it }
     }
 
     /** Forget everything about the previous profile's server. */
     fun reset() {
         synchronized(imdbToEmby) { imdbToEmby.clear(); embyToImdb.clear(); nameToEmby.clear() }
         indexedAt = 0
-        userData.clear(); introKeys.clear(); episodeIndex.clear(); started.clear()
+        userData.clear(); introKeys.clear(); episodeIndex.clear(); episodeRecs.clear(); episodeSpans.clear(); started.clear()
     }
 
     // ---------------------------------------------------------------- seek thumbnails

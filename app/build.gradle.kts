@@ -9,6 +9,7 @@ val buildNumber = (System.getenv("VERSION_CODE") ?: "1").toInt()
 android {
     namespace = "com.maxim.marquee"
     compileSdk = 35
+    testOptions { unitTests.isReturnDefaultValues = true }
 
     defaultConfig {
         applicationId = "com.maxim.marquee"
@@ -100,4 +101,5 @@ dependencies {
     implementation("com.github.teamnewpipe:NewPipeExtractor:v0.26.5")
     implementation("com.github.TeamNewPipe:nanojson:e9d656ddb49a412a5a0a5d5ef20ca7ef09549996")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.4")
+    testImplementation("junit:junit:4.13.2")
 }

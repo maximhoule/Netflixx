@@ -32,14 +32,14 @@ jobs:
       - name: Build signed APK
         run: |
           set -o pipefail
-          gradle :app:assembleRelease --no-daemon 2>&1 | tee build.log
+          gradle :app:testReleaseUnitTest :app:assembleRelease --no-daemon 2>&1 | tee build.log
         env:
           VERSION_CODE: ${{ github.run_number }}
 
       - name: Report build errors
         if: failure()
         run: |
-          { grep -E "^e: " build.log; grep -E -A6 "What went wrong" build.log; } | head -200 > errors.txt || true
+          { grep -E "^e: |FAILED|AssertionError|expected:" build.log; grep -E -A6 "What went wrong" build.log; } | head -200 > errors.txt || true
           grep -E "Missing class|R8:|ERROR:" build.log | head -60 >> errors.txt || true
           cat app/build/outputs/mapping/release/missing_rules.txt >> errors.txt 2>/dev/null || true
           [ -s errors.txt ] || tail -60 build.log > errors.txt

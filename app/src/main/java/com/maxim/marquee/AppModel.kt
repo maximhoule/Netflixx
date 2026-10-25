@@ -1014,7 +1014,19 @@ class AppModel(private val activity: MainActivity) {
     }
 
     /** Puts the sources the TV handles best first (respecting the max-quality setting). */
-    private fun rank(streams: List<StreamItem>): List<StreamItem> {
+    private fun rank(streams: List<StreamItem>, req: PlayReq? = null): List<StreamItem> {
+        // A source whose file is clearly another episode (numbering differs between services)
+        // goes to the very end: only used if nothing else plays.
+        val meta = req?.takeIf { it.type == "series" }?.let { Repo.cachedMeta(it.type, it.metaId) }
+        val video = meta?.videos?.firstOrNull { it.id == req.videoId }
+        val (right, wrong) = if (meta != null && video != null) {
+            streams.partition { !com.maxim.marquee.data.Episodes.mismatch(it, meta.videos, video) }
+        } else streams to emptyList()
+        if (wrong.isNotEmpty()) android.util.Log.i("Marquee", "${wrong.size} sources skipped: wrong episode for ${req?.videoId}")
+        return rankQuality(right) + rankQuality(wrong)
+    }
+
+    private fun rankQuality(streams: List<StreamItem>): List<StreamItem> {
         // "Best available" still never auto-picks above what the TV can show.
         val cap = if (Store.maxQuality > 0) Store.maxQuality else displayMaxHeight
         fun ok(s: StreamItem): Boolean {
@@ -1082,7 +1094,7 @@ class AppModel(private val activity: MainActivity) {
             val all = streamsFor(req.type, req.videoId).await()
             // Addons report problems (expired debrid, bad key…) as fake "streams": don't play those.
             val (errors, real) = all.partition { it.looksLikeError() }
-            val streams = rank(real)
+            val streams = rank(real, req)
             if (streams.isEmpty()) {
                 streamCache.remove("${req.type}/${req.videoId}")
                 loading = null
@@ -1147,7 +1159,7 @@ class AppModel(private val activity: MainActivity) {
         val current = meta?.videos?.firstOrNull { it.id == p.req.videoId }
         // A double-episode file (e.g. S04E03-E04 as one hour): part 2 starts halfway in, and the
         // next episode is the one after the whole file.
-        val span = s.episodeSpan?.takeIf { current != null && current.episode in it }
+        val span = if (meta != null && current != null) com.maxim.marquee.data.Episodes.span(s, meta.videos, current) else null
         val part = span?.let { current!!.episode - it.first } ?: 0
         val parts = span?.let { it.last - it.first + 1 } ?: 1
         val next = meta?.let { m -> nextVideo(m, lastOfSpan(m, current, span) ?: p.req.videoId) }
@@ -1225,7 +1237,7 @@ class AppModel(private val activity: MainActivity) {
                 Repo.meta(p.req.type, p.req.metaId)?.let { m ->
                     // A double-episode file: every part counts as watched, up next is after the file.
                     val cur = m.videos.firstOrNull { it.id == p.req.videoId }
-                    val span = p.streams.getOrNull(p.index)?.episodeSpan?.takeIf { cur != null && cur.episode in it }
+                    val span = p.streams.getOrNull(p.index)?.let { st -> cur?.let { com.maxim.marquee.data.Episodes.span(st, m.videos, it) } }
                     if (span != null && cur != null) {
                         m.videos.filter { it.season == cur.season && it.episode in span && it.episode > cur.episode }.forEach { v ->
                             Store.saveProgress(LocalProgress(p.req.metaId, p.req.type, p.req.name, p.req.poster, v.id, 1, 1, System.currentTimeMillis() - 1))

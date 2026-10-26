@@ -97,6 +97,8 @@ measure_start
 tab 1; sleep 3; shot search
 key DPAD_RIGHT DPAD_CENTER DPAD_LEFT DPAD_CENTER DPAD_DOWN DPAD_DOWN DPAD_DOWN DPAD_RIGHT DPAD_CENTER
 sleep 15; shot search_results_bat
+# A result may have opened its page: close it before using the menu.
+key BACK; sleep 2
 measure_end search
 
 summary "== settings, series, movies, my list"

@@ -571,6 +571,38 @@ object Emby {
         }
     }
 
+    private val thumbCache = java.util.concurrent.ConcurrentHashMap<String, Map<String, String>>()
+
+    /**
+     * Your server's picture for each episode of a show ("season:episode" → image), for a show
+     * from an addon that your server also has. Empty when it isn't there.
+     */
+    suspend fun episodeThumbs(metaId: String): Map<String, String> {
+        if (!connected) return emptyMap()
+        val embyTitle = if (isEmby(metaId)) rawId(metaId) else {
+            if (synchronized(imdbToEmby) { imdbToEmby.isEmpty() }) buildIndex()
+            synchronized(imdbToEmby) { imdbToEmby[metaId.substringBefore(':')] } ?: byName("series", metaId) ?: return emptyMap()
+        }
+        thumbCache[embyTitle]?.let { return it }
+        val list = getObj("/Shows/$embyTitle/Episodes?UserId=$userId&Fields=ParentId&EnableImageTypes=Primary,Thumb")
+            ?.arr("Items").objects() ?: return emptyMap()
+        val m = HashMap<String, String>()
+        list.forEach { e ->
+            val sn = e.int("ParentIndexNumber") ?: return@forEach
+            val en = e.int("IndexNumber") ?: return@forEach
+            val url = img(e.str("Id"), "Primary", e.obj("ImageTags")?.str("Primary"), "maxWidth=400")
+                ?: img(e.str("Id"), "Thumb", e.obj("ImageTags")?.str("Thumb"), "maxWidth=400")
+                ?: return@forEach
+            m["$sn:$en"] = url
+            // A double episode file: its picture stands for both numbers.
+            e.int("IndexNumberEnd")?.takeIf { it > en && it - en <= 3 }?.let { end ->
+                for (k in en + 1..end) m.putIfAbsent("$sn:$k", url)
+            }
+        }
+        thumbCache[embyTitle] = m
+        return m
+    }
+
     /** Emby episode ids per series, keyed "season:episode". */
     private val episodeIndex = HashMap<String, Map<String, String>>()
 
@@ -631,7 +663,7 @@ object Emby {
     fun reset() {
         synchronized(imdbToEmby) { imdbToEmby.clear(); embyToImdb.clear(); nameToEmby.clear() }
         indexedAt = 0
-        userData.clear(); introKeys.clear(); episodeIndex.clear(); episodeRecs.clear(); episodeSpans.clear(); started.clear()
+        userData.clear(); introKeys.clear(); episodeIndex.clear(); thumbCache.clear(); episodeRecs.clear(); episodeSpans.clear(); started.clear()
     }
 
     // ---------------------------------------------------------------- seek thumbnails

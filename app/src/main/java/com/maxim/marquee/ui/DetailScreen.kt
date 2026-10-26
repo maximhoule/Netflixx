@@ -389,6 +389,17 @@ private fun ColumnScope.EpisodesPanel(
         else episodes.filter { it.title.contains(q, ignoreCase = true) || it.episode.toString() == q || it.label.equals(q, true) }
     }
     val listState = rememberLazyListState()
+    // Episode pictures: the list's own, else your Emby server's, else TMDB's (when a key is set).
+    // A picture shared by several episodes is the show's artwork, not the episode's: not used.
+    val embyThumbs by androidx.compose.runtime.produceState(emptyMap<String, String>(), meta.id) {
+        value = runCatching { com.maxim.marquee.data.Emby.episodeThumbs(meta.id) }.getOrDefault(emptyMap())
+    }
+    val tmdbThumbs by androidx.compose.runtime.produceState(emptyMap<Int, String>(), meta.id, season) {
+        value = runCatching { com.maxim.marquee.data.Tmdb.seasonStills(meta.id, season) }.getOrDefault(emptyMap())
+    }
+    val sharedThumbs = remember(episodes) {
+        episodes.mapNotNull { it.thumbnail }.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+    }
     val targetIndex = eps.indexOfFirst { it.id == target?.id }
     val targetFr = remember { FocusRequester() }
     val firstFr = remember { FocusRequester() }
@@ -561,7 +572,11 @@ private fun ColumnScope.EpisodesPanel(
             EpisodeRow(
                 ep = ep,
                 showSeason = q.isNotEmpty(),
-                fallbackImage = meta.background ?: meta.poster,
+                images = listOfNotNull(
+                    ep.thumbnail?.takeIf { it !in sharedThumbs },
+                    embyThumbs["${ep.season}:${ep.episode}"],
+                    if (ep.season == season) tmdbThumbs[ep.episode] else null,
+                ).distinct(),
                 progress = model.progressFor(meta.id, ep.id).also { tick },
                 watched = model.watched(meta.id, ep.id),
                 upNext = isTarget,
@@ -604,7 +619,7 @@ private fun NavText(label: String, icon: ImageVector, iconFirst: Boolean, enable
 private fun EpisodeRow(
     ep: Video,
     showSeason: Boolean,
-    fallbackImage: String?,
+    images: List<String>,
     progress: Float?,
     watched: Boolean,
     upNext: Boolean,
@@ -634,9 +649,19 @@ private fun EpisodeRow(
                     .clip(RoundedCornerShape(8.dp))
                     .background(C.Surface),
             ) {
-                val img = ep.thumbnail ?: fallbackImage
-                if (img != null) {
-                    AsyncImage(img, ep.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                // Tries each picture in turn; with none, the episode number (never the show's poster).
+                var attempt by remember(images) { mutableIntStateOf(0) }
+                val img = images.getOrNull(attempt)
+                if (img == null) {
+                    Text(
+                        "E${ep.episode}", color = Color(0x66FFFFFF), fontSize = 22.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                } else {
+                    AsyncImage(
+                        img, ep.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                        onError = { attempt++ },
+                    )
                 }
                 if (watched) {
                     Box(

@@ -68,6 +68,26 @@ object Tmdb {
         return Extras(cert, logo, trailers).also { extrasCache.put(tt, it) }
     }
 
+    private val tvIds = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val stillCache = android.util.LruCache<String, Map<Int, String>>(60)
+
+    /** Episode pictures for one season of a show ("episode number" → image), when a key is set. */
+    suspend fun seasonStills(imdbId: String, season: Int): Map<Int, String> {
+        val tt = imdbId.substringBefore(':')
+        if (!configured || !tt.startsWith("tt")) return emptyMap()
+        stillCache.get("$tt:$season")?.let { return it }
+        val id = tvIds[tt] ?: get("/find/$tt?external_source=imdb_id")?.arr("tv_results").objects().firstOrNull()?.long("id")
+            ?.also { tvIds[tt] = it } ?: return emptyMap()
+        val eps = get("/tv/$id/season/$season")?.arr("episodes").objects() ?: return emptyMap()
+        val m = eps.mapNotNull { e ->
+            val n = e.int("episode_number") ?: return@mapNotNull null
+            val p = e.str("still_path") ?: return@mapNotNull null
+            n to "https://image.tmdb.org/t/p/w300$p"
+        }.toMap()
+        stillCache.put("$tt:$season", m)
+        return m
+    }
+
     /** The franchise a movie belongs to, in release order, or null. */
     suspend fun collectionFor(imdbId: String): Collection? = coroutineScope {
         if (!configured || !imdbId.startsWith("tt")) return@coroutineScope null

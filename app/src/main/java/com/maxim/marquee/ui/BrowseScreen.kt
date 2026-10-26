@@ -53,8 +53,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -124,7 +130,7 @@ fun TopNav(model: AppModel, requesters: Map<Tab, FocusRequester>) {
             .focusGroup(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("MARQUEE", color = C.Red, fontSize = 22.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+        MarqueeLogo()
         Spacer(Modifier.width(26.dp))
         val tabs = model.tabs
         NAV_TEXT_TABS.filter { it in tabs }.forEach { t ->
@@ -226,10 +232,23 @@ fun BrowseScreen(model: AppModel, b: BrowseState, active: Boolean = true) {
     val colSpec = remember(density) { PivotSpec(with(density) { 40.dp.toPx() }) }
     // Coming in from the menu: the card you were on (else the first one), not whichever button
     // or card happens to sit below the menu item.
+    var heroFull by remember { mutableStateOf(false) }
+    val playFr = remember { FocusRequester() }
+    // Up from the first row: the billboard opens and Play takes focus.
+    var focusPlay by remember { mutableStateOf(0) }
+    LaunchedEffect(focusPlay) {
+        if (focusPlay == 0) return@LaunchedEffect
+        repeat(4) {
+            withFrameNanos { }
+            if (runCatching { playFr.requestFocus() }.isSuccess) return@LaunchedEffect
+        }
+    }
     val cardEntry: () -> FocusRequester = { (b.lastFocusKey ?: b.firstKey())?.let { b.cardRequesters[it] } ?: FocusRequester.Default }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val heroH = maxHeight * 0.6f
+        // Full billboard (with Play / More Info) while you're on it; shorter while you browse the
+        // rows, so the posters are never cut off at the bottom.
+        val heroH = maxHeight * (if (heroFull) 0.6f else 0.44f)
         // The billboard lives in its own composables: changing title only redraws the billboard,
         // never the rows below it.
         HeroBackdrop(model, b, active, Modifier.align(Alignment.TopCenter).fillMaxWidth().height(maxHeight * 0.88f))
@@ -237,7 +256,7 @@ fun BrowseScreen(model: AppModel, b: BrowseState, active: Boolean = true) {
         // Below the menu bar (not under it), so moving down from the menu finds this screen.
         Column(Modifier.fillMaxSize().padding(top = TOP_BAR).focusProperties { enter = { cardEntry() } }.focusGroup()) {
             Box(Modifier.fillMaxWidth().height(heroH - TOP_BAR)) {
-                HeroInfo(model, b)
+                HeroInfo(model, b, heroFull, playFr) { heroFull = true }
             }
 
             val hasCatalogs = b.rows.any { it.source !is RowSource.Continue && it.source !is RowSource.NewEpisodes }
@@ -263,7 +282,19 @@ fun BrowseScreen(model: AppModel, b: BrowseState, active: Boolean = true) {
                             state = b.columnState,
                             // From Play / More Info: into the row below, at its first poster
                             // (each row decides, see CatalogRow).
-                            modifier = Modifier.fillMaxSize().focusGroup(),
+                            modifier = Modifier.fillMaxSize()
+                                .onFocusChanged { if (it.hasFocus) heroFull = false }
+                                .onPreviewKeyEvent { e ->
+                                    val topRow = b.rows.firstOrNull { !b.rowItems[it.key].isNullOrEmpty() }?.key
+                                    if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionUp && b.hero != null &&
+                                        topRow != null && b.lastFocusKey?.substringBefore('#') == topRow
+                                    ) {
+                                        heroFull = true
+                                        focusPlay++
+                                        true
+                                    } else false
+                                }
+                                .focusGroup(),
                             contentPadding = PaddingValues(bottom = 300.dp),
                         ) {
                             items(b.rows, key = { it.key }) { row ->
@@ -305,12 +336,6 @@ private fun HeroBackdrop(model: AppModel, b: BrowseState, active: Boolean, modif
     Backdrop(bg, modifier, wide = true, video = trailerLayer)
 }
 
-private fun kindLabel(m: com.maxim.marquee.data.MetaItem) = when (m.type) {
-    "movie" -> "FILM"
-    "series" -> "SERIES"
-    "tv", "channel" -> "LIVE"
-    else -> m.type.uppercase()
-}
 
 /** Play from the billboard: carry on where you were, else the first (or next) episode. */
 private fun heroPlay(model: AppModel, item: CardItem, full: com.maxim.marquee.data.MetaItem?) {
@@ -323,7 +348,7 @@ private fun heroPlay(model: AppModel, item: CardItem, full: com.maxim.marquee.da
 }
 
 @Composable
-private fun BoxScope.HeroInfo(model: AppModel, b: BrowseState) {
+private fun BoxScope.HeroInfo(model: AppModel, b: BrowseState, full: Boolean, playFr: FocusRequester, onButtons: () -> Unit) {
     val hero = b.hero
     if (hero != null) {
         val m = b.heroMeta ?: hero.meta
@@ -331,12 +356,6 @@ private fun BoxScope.HeroInfo(model: AppModel, b: BrowseState) {
         Column(
             Modifier.align(Alignment.BottomStart).padding(start = 48.dp, bottom = 4.dp).width(580.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("MARQUEE", color = C.Red, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
-                Spacer(Modifier.width(7.dp))
-                Text(kindLabel(m), color = Color(0xFFE0E0E0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-            }
-            Spacer(Modifier.height(4.dp))
             TitleArt(m, big = false, extraLogo = extras?.logo)
             Spacer(Modifier.height(10.dp))
             InfoRow(m, extras?.certification, leading = hero.badge ?: model.ribbonFor(m))
@@ -347,13 +366,19 @@ private fun BoxScope.HeroInfo(model: AppModel, b: BrowseState) {
                     lineHeight = 20.sp, modifier = Modifier.width(520.dp),
                 )
             }
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val resume = hero.videoId != null && hero.progress != null
-                PillButton(if (resume) "Resume" else "Play", PlayerIcons.Play, primary = true) {
-                    heroPlay(model, hero, b.heroMeta)
+            // The buttons only while you're up here; browsing the rows, they make room for the posters.
+            if (full) {
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val resume = hero.videoId != null && hero.progress != null
+                    PillButton(
+                        if (resume) "Resume" else "Play", PlayerIcons.Play, primary = true,
+                        focusRequester = playFr, onFocus = onButtons,
+                    ) {
+                        heroPlay(model, hero, b.heroMeta)
+                    }
+                    PillButton("More Info", Icons.Outlined.Info, onFocus = onButtons) { model.openDetail(hero.meta) }
                 }
-                PillButton("More Info", Icons.Outlined.Info) { model.openDetail(hero.meta) }
             }
         }
     } else if (model.addonError == null && b.rows.any { b.loaded[it.key] != true }) {
@@ -496,6 +521,40 @@ fun CatalogRow(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * The MARQUEE wordmark, cinema style: tall condensed red letters on a slight arc (the outer
+ * letters a little taller, like a film title card), with a soft shadow.
+ */
+@Composable
+fun MarqueeLogo(height: androidx.compose.ui.unit.Dp = 30.dp) {
+    val letters = "MARQUEE"
+    val font = androidx.compose.ui.text.font.FontFamily(android.graphics.Typeface.create("sans-serif-condensed", android.graphics.Typeface.BOLD))
+    val brush = Brush.verticalGradient(0f to Color(0xFFFF2A2A), 0.55f to Color(0xFFE50914), 1f to Color(0xFF9E0710))
+    val style = androidx.compose.ui.text.TextStyle(
+        brush = brush,
+        fontFamily = font,
+        fontWeight = FontWeight.Black,
+        fontSize = with(LocalDensity.current) { (height * 0.82f).toSp() },
+        shadow = androidx.compose.ui.graphics.Shadow(Color(0xAA000000), androidx.compose.ui.geometry.Offset(0f, 3f), 6f),
+        letterSpacing = 0.sp,
+    )
+    Row(Modifier.height(height), verticalAlignment = Alignment.Top) {
+        val mid = (letters.length - 1) / 2f
+        letters.forEachIndexed { i, ch ->
+            // 0 in the middle, 1 at the ends: the ends stretch taller, bottoms curve like a smile.
+            val t = kotlin.math.abs(i - mid) / mid
+            Text(
+                ch.toString(),
+                style = style,
+                modifier = Modifier.graphicsLayer {
+                    scaleY = 1.18f + 0.16f * t * t
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f)
+                },
+            )
         }
     }
 }

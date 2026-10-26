@@ -771,13 +771,20 @@ class AppModel(private val activity: MainActivity) {
      * (type != other, not removed unless temporary, offset > 0), newest change first.
      * Titles watched only in this app are merged in from local progress.
      */
+    /**
+     * When a library title was last watched. Not its "modified" time: that also changes when it's
+     * synced, added to a list or edited elsewhere, which pushed shows you weren't watching to the
+     * front of Continue Watching.
+     */
+    private fun watchedAt(e: com.maxim.marquee.data.LibEntry): Long = if (e.lastWatched > 0) e.lastWatched else e.mtime
+
     fun continueItems(): List<CardItem> {
         val byId = HashMap<String, Cand>()
         library.forEach { e ->
             if (e.type != "other" && (!e.removed || e.temp) && e.timeOffset > 0) {
                 byId[e.id] = Cand(
                     e.id, e.type, e.name, e.poster, e.videoId ?: e.id, e.timeOffset, e.duration,
-                    maxOf(e.mtime, e.lastWatched), e.posterShape,
+                    watchedAt(e), e.posterShape,
                 )
             }
         }
@@ -785,7 +792,7 @@ class AppModel(private val activity: MainActivity) {
         Store.allProgress().filterNot { com.maxim.marquee.data.Emby.isEmby(it.metaId) }.groupBy { it.metaId }.forEach { (metaId, list) ->
             val p = list.maxByOrNull { it.updated } ?: return@forEach
             val lib = inLibrary[metaId]
-            val libTime = lib?.let { maxOf(it.mtime, it.lastWatched) } ?: -1
+            val libTime = lib?.let { watchedAt(it) } ?: -1
             if (p.updated <= libTime) return@forEach // Stremio has newer info
             if (lib != null && lib.removed && !lib.temp) return@forEach // removed from library on purpose
             val finished = p.duration > 0 && p.position >= p.duration * 0.95

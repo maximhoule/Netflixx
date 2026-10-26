@@ -67,7 +67,7 @@ import com.maxim.marquee.RowSource
 import com.maxim.marquee.Tab
 import com.maxim.marquee.data.CardItem
 
-val CARD_W = 118.dp
+val CARD_W = 112.dp
 
 private val BROWSE_TABS = setOf(Tab.HOME, Tab.SERIES, Tab.MOVIES, Tab.SPORTS)
 
@@ -93,7 +93,8 @@ fun MainShell(model: AppModel, railRequesters: Map<Tab, FocusRequester>, active:
             }
         }
         if (model.tab !in BROWSE_TABS) {
-            Box(Modifier.fillMaxSize().padding(top = TOP_BAR - 8.dp)) {
+            // Starts below the menu bar: moving down from the menu has to find it below.
+            Box(Modifier.fillMaxSize().padding(top = TOP_BAR)) {
                 when (model.tab) {
                     Tab.SEARCH -> SearchScreen(model)
                     Tab.MYLIST -> MyListScreen(model)
@@ -228,13 +229,14 @@ fun BrowseScreen(model: AppModel, b: BrowseState, active: Boolean = true) {
     val cardEntry: () -> FocusRequester = { (b.lastFocusKey ?: b.firstKey())?.let { b.cardRequesters[it] } ?: FocusRequester.Default }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val heroH = maxHeight * 0.565f
+        val heroH = maxHeight * 0.6f
         // The billboard lives in its own composables: changing title only redraws the billboard,
         // never the rows below it.
         HeroBackdrop(model, b, active, Modifier.align(Alignment.TopCenter).fillMaxWidth().height(maxHeight * 0.88f))
 
-        Column(Modifier.fillMaxSize().focusProperties { enter = { cardEntry() } }.focusGroup()) {
-            Box(Modifier.fillMaxWidth().height(heroH)) {
+        // Below the menu bar (not under it), so moving down from the menu finds this screen.
+        Column(Modifier.fillMaxSize().padding(top = TOP_BAR).focusProperties { enter = { cardEntry() } }.focusGroup()) {
+            Box(Modifier.fillMaxWidth().height(heroH - TOP_BAR)) {
                 HeroInfo(model, b)
             }
 

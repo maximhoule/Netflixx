@@ -183,7 +183,7 @@ data class MetaItem(
                 runtime = o.str("runtime"),
                 genres = (o.arr("genres") ?: o.arr("genre")).strings(),
                 cast = o.arr("cast").strings(),
-                videos = o.arr("videos").objects().mapNotNull { Video.parse(it) },
+                videos = Episodes.clean(o.arr("videos").objects().mapNotNull { Video.parse(it) }),
                 defaultVideoId = o.obj("behaviorHints")?.str("defaultVideoId"),
                 trailer = yt.firstOrNull(),
                 trailers = yt,

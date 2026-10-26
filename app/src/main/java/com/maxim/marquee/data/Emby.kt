@@ -505,8 +505,10 @@ object Emby {
         val imdb = o.obj("ProviderIds")?.str("Imdb")
         val eps = getObj("/Shows/$raw/Episodes?UserId=$userId&Fields=Overview,RunTimeTicks&EnableImageTypes=Primary")
             ?.arr("Items").objects() ?: emptyList()
+        val placeholders = HashSet<String>()
         val videos = eps.mapNotNull { e ->
             remember(e)
+            if (e.str("LocationType") == "Virtual") e.str("Id")?.let { placeholders += PREFIX + it }
             val eid = e.str("Id") ?: return@mapNotNull null
             val season = e.int("ParentIndexNumber") ?: 0
             val number = e.int("IndexNumber") ?: 0
@@ -520,7 +522,7 @@ object Emby {
                 overview = e.str("Overview"),
             )
         }
-        return base.copy(videos = videos)
+        return base.copy(videos = Episodes.clean(videos) { if (it.id in placeholders) 1 else 0 })
     }
 
     /** Emby's own metadata for a Stremio title, used if no addon can describe it. */

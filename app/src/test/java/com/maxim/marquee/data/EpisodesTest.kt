@@ -56,4 +56,14 @@ class EpisodesTest {
         // Your Emby server's own match is trusted.
         assertFalse(Episodes.mismatch(file("S04E10").copy(embyId = "emby:1"), all, ep(9)))
     }
+
+    @Test fun duplicatesRemoved() {
+        val dup = all + Video("x:4:7", "Money (1), Money (2)", 4, 7, null, null) + all[0]
+        val clean = Episodes.clean(dup)
+        assertEquals(all.map { it.id }, clean.map { it.id })
+        // A server's placeholder loses to the real file, whichever comes first.
+        val real = Video("emby:real", "Money (1), Money (2)", 4, 7, null, null)
+        val c2 = Episodes.clean(listOf(ep(6), ep(7), real, ep(8))) { if (it.id == ep(7).id) 1 else 0 }
+        assertEquals(listOf(ep(6).id, "emby:real", ep(8).id), c2.map { it.id })
+    }
 }

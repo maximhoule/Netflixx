@@ -1,5 +1,7 @@
 package com.maxim.marquee
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -115,7 +117,14 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
 
     override val title: String get() = name
     override var episode: String? = null
-    override var next: EpisodeRef? = null
+    override var next: EpisodeRef? by androidx.compose.runtime.mutableStateOf<EpisodeRef?>(null)
+    /** Up next if this file turns out to hold every part of a split story (e.g. "Money (1)" + "(2)"). */
+    private var groupNext: EpisodeRef? = null
+    private var groupNextKnown = false
+    private var partLenMs = 0L
+    private var groupParts = 1
+    /** This file was found to hold the whole story, not just the part asked for. */
+    private var merged = false
     override var episodes: List<EpisodeRef> = emptyList()
     override val currentVideoId: String get() = videoId
 
@@ -174,6 +183,12 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         val part = intent.getIntExtra("part", 0)
         val parts = intent.getIntExtra("parts", 1)
         if (start <= 0 && part > 0 && parts > 1) partSeek = part.toFloat() / parts
+        partLenMs = intent.getLongExtra("partLen", 0)
+        groupParts = intent.getIntExtra("groupParts", 1)
+        groupNextKnown = intent.hasExtra("groupNextKnown")
+        intent.getStringExtra("groupNextId")?.let { id ->
+            groupNext = EpisodeRef(id, intent.getStringExtra("groupNextLabel") ?: "", intent.getStringExtra("groupNextTitle") ?: "")
+        }
 
         val headers = mutableMapOf<String, String>()
         runCatching {
@@ -421,6 +436,15 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         override fun onPlaybackStateChanged(state: Int) {
             ui.buffering = state == Player.STATE_BUFFERING || (state == Player.STATE_IDLE && !started)
             if (state == Player.STATE_READY) {
+                // Part 1 of a split story, but the file is long enough to hold every part:
+                // up next is whatever comes after the whole story.
+                if (!merged && groupNextKnown && groupParts > 1 && partLenMs > 0) {
+                    val d = player.duration
+                    if (d > 0 && d != C.TIME_UNSET && d >= partLenMs * 1.6) {
+                        merged = true
+                        next = groupNext
+                    }
+                }
                 partSeek?.let { f ->
                     val d = player.duration
                     if (d > 0 && d != C.TIME_UNSET) {
@@ -653,7 +677,10 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             // Next episode card at the credits
             val nx = next
             if (nx != null && dur > 10 * 60_000L) {
-                val creditsAt = seg?.outro?.startMs?.takeIf { it < dur } ?: (dur - 40_000)
+                // Credits timings come from another cut sometimes (a single episode's, for a file
+                // that holds two): only believed when they're really near the end.
+                val creditsAt = seg?.outro?.startMs?.takeIf { it < dur && it >= dur / 2 && dur - it <= maxOf(6 * 60_000L, dur / 5) }
+                    ?: (dur - 40_000)
                 if (pos >= creditsAt && !nextDismissed) {
                     if (!ui.nextCard) {
                         ui.nextCard = true
@@ -1113,6 +1140,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             setResult(
                 RESULT_OK,
                 Intent().putExtra("outcome", outcome).putExtra("videoId", outcomeVideo).putExtra("auto", outcomeAuto)
+                    .putExtra("merged", merged)
                     .putExtra("httpCode", httpCode).putExtra("reason", failReason),
             )
         }

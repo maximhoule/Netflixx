@@ -977,7 +977,11 @@ class AppModel(private val activity: MainActivity) {
     fun nextVideo(meta: MetaItem, videoId: String): Video? {
         val eps = sortedEpisodes(meta).filter { it.season > 0 }
         val i = eps.indexOfFirst { it.id == videoId }
-        val next = if (i >= 0 && i + 1 < eps.size) eps[i + 1] else return null
+        if (i < 0) return null
+        val cur = eps[i]
+        // Strictly after this one: never the same episode again under another entry.
+        val next = eps.drop(i + 1).firstOrNull { it.season > cur.season || (it.season == cur.season && it.episode > cur.episode) }
+            ?: return null
         // A day's grace for time zones (air dates are midnight UTC).
         return if (next.released > System.currentTimeMillis() + 24 * 3_600_000L) null else next
     }
@@ -1163,6 +1167,13 @@ class AppModel(private val activity: MainActivity) {
         val part = span?.let { current!!.episode - it.first } ?: 0
         val parts = span?.let { it.last - it.first + 1 } ?: 1
         val next = meta?.let { m -> nextVideo(m, lastOfSpan(m, current, span) ?: p.req.videoId) }
+        // Part 1 of a split story ("Money (1)", "Money (2)"): the file may well be the whole story,
+        // which the player can tell from its length; it then lines up what comes after it.
+        val group = if (span == null && meta != null && current != null) {
+            com.maxim.marquee.data.Episodes.partGroup(meta.videos, current).takeIf { it.size > 1 && it.first().id == current.id }
+        } else null
+        val groupNext = group?.let { g -> nextVideo(meta!!, g.last().id) }
+        val partLen = runtimeMs(meta?.runtime)
         val season = meta?.let { m -> sortedEpisodes(m).filter { it.season == (current?.season ?: it.season) } } ?: emptyList()
         if (!coroutineContext.isActive) return
         loading = null
@@ -1187,8 +1198,23 @@ class AppModel(private val activity: MainActivity) {
         pending = p
         activity.playerLauncher.launch(
             PlayerActivity.intent(activity, p.req, s, subs, start, next, season, p.autoChain)
-                .putExtra("part", part).putExtra("parts", parts),
+                .putExtra("part", part).putExtra("parts", parts)
+                .apply {
+                    if (group != null && partLen > 0) {
+                        putExtra("groupNextKnown", true).putExtra("groupParts", group.size).putExtra("partLen", partLen)
+                        groupNext?.let { putExtra("groupNextId", it.id).putExtra("groupNextLabel", it.label).putExtra("groupNextTitle", it.title) }
+                    }
+                },
         )
+    }
+
+    /** "22 min", "1h 5min", "45" → milliseconds; 0 if unknown. */
+    private fun runtimeMs(r: String?): Long {
+        if (r.isNullOrBlank()) return 0
+        val h = Regex("(\\d+)\\s*h").find(r)?.groupValues?.get(1)?.toLongOrNull() ?: 0
+        val m = Regex("(\\d+)\\s*m").find(r)?.groupValues?.get(1)?.toLongOrNull()
+            ?: if (h == 0L) Regex("(\\d+)").find(r)?.groupValues?.get(1)?.toLongOrNull() ?: 0 else 0
+        return (h * 60 + m) * 60_000L
     }
 
     /** The id of the last episode a double-episode file covers (same season), else null. */
@@ -1211,6 +1237,7 @@ class AppModel(private val activity: MainActivity) {
         val reason = data?.getStringExtra("reason")
         val outcomeVideo = data?.getStringExtra("videoId")
         val auto = data?.getBooleanExtra("auto", false) ?: false
+        val merged = data?.getBooleanExtra("merged", false) ?: false
 
         if (p.external) {
             val pos = data?.getIntExtra("position", -1) ?: -1
@@ -1238,6 +1265,7 @@ class AppModel(private val activity: MainActivity) {
                     // A double-episode file: every part counts as watched, up next is after the file.
                     val cur = m.videos.firstOrNull { it.id == p.req.videoId }
                     val span = p.streams.getOrNull(p.index)?.let { st -> cur?.let { com.maxim.marquee.data.Episodes.span(st, m.videos, it) } }
+                        ?: cur?.takeIf { merged }?.let { c -> com.maxim.marquee.data.Episodes.partGroup(m.videos, c).let { g -> g.first().episode..g.last().episode } }
                     if (span != null && cur != null) {
                         m.videos.filter { it.season == cur.season && it.episode in span && it.episode > cur.episode }.forEach { v ->
                             Store.saveProgress(LocalProgress(p.req.metaId, p.req.type, p.req.name, p.req.poster, v.id, 1, 1, System.currentTimeMillis() - 1))

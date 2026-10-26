@@ -15,6 +15,24 @@ object Episodes {
     )
     private val NON_WORD = Regex("[^\\p{L}\\p{N}]+")
 
+    /** "Money (1), Money (2)" / "Name (1) / Name (2)": one entry standing for several parts. */
+    private fun combined(t: String) = t.contains(" / ") || (t.contains(", ") && t.split(", ").count { hasPart(it) } >= 2)
+
+    /**
+     * The episode list without duplicates: the same id twice, or two entries for one episode
+     * number (a merged "Money (1), Money (2)" next to "Money (1)", a missing-episode placeholder
+     * next to the real file). [worse] scores entries to drop first (e.g. a server's placeholders).
+     */
+    fun clean(videos: List<Video>, worse: (Video) -> Int = { 0 }): List<Video> {
+        val unique = videos.distinctBy { it.id }
+        val keep = unique.filter { it.season > 0 && it.episode > 0 }
+            .groupBy { it.season to it.episode }
+            .filterValues { it.size > 1 }
+            .mapValues { (_, l) -> l.minBy { worse(it) * 10 + (if (combined(it.title)) 1 else 0) } }
+        if (keep.isEmpty()) return unique
+        return unique.filter { v -> keep[v.season to v.episode]?.let { it === v } ?: true }
+    }
+
     /** "Season 4 · Episode 3" read from a file / source name, if it says. */
     fun fileEpisode(s: StreamItem): Pair<Int, Int>? =
         SXE.find("${s.name} ${s.title} ${s.fileName ?: ""}")?.let {

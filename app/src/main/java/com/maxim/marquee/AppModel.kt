@@ -1198,7 +1198,7 @@ class AppModel(private val activity: MainActivity) {
         pending = p
         activity.playerLauncher.launch(
             PlayerActivity.intent(activity, p.req, s, subs, start, next, season, p.autoChain)
-                .putExtra("part", part).putExtra("parts", parts)
+                .putExtra("part", part).putExtra("parts", parts).putExtra("runtime", partLen)
                 .apply {
                     if (group != null && partLen > 0) {
                         putExtra("groupNextKnown", true).putExtra("groupParts", group.size).putExtra("partLen", partLen)

@@ -125,6 +125,16 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
     private var groupParts = 1
     /** This file was found to hold the whole story, not just the part asked for. */
     private var merged = false
+    /** Which part of a multi-episode file this is (0-based), of how many. */
+    private var part = 0
+    private var parts = 1
+    /** The show's usual episode length, to recognise a different cut of the episode. */
+    private var runtimeMs = 0L
+    /** Timings came from your server for this exact file (not community data for some release). */
+    private var segmentsExact = false
+    /** Timings as fetched; [segments] is them lined up with this file. */
+    private var segmentsRaw: Repo.Segments? = null
+    private var segmentsFitFor: Any? = null
     override var episodes: List<EpisodeRef> = emptyList()
     override val currentVideoId: String get() = videoId
 
@@ -180,8 +190,9 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         }.getOrDefault(emptyList())
         val start = intent.getLongExtra("start", 0)
         // Part 2 of a double-episode file, starting fresh: jump to its half once the length is known.
-        val part = intent.getIntExtra("part", 0)
-        val parts = intent.getIntExtra("parts", 1)
+        part = intent.getIntExtra("part", 0)
+        parts = intent.getIntExtra("parts", 1)
+        runtimeMs = intent.getLongExtra("runtime", 0)
         if (start <= 0 && part > 0 && parts > 1) partSeek = part.toFloat() / parts
         partLenMs = intent.getLongExtra("partLen", 0)
         groupParts = intent.getIntExtra("groupParts", 1)
@@ -237,8 +248,9 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
 
         // Skip intro: your server's own markers for this file first (exact), else community timings.
         if (type == "series") lifecycleScope.launch {
-            segments = embyId?.let { runCatching { com.maxim.marquee.data.Emby.markers(it) }.getOrNull() }
-                ?: Repo.segments(videoId)
+            val exact = embyId?.let { runCatching { com.maxim.marquee.data.Emby.markers(it) }.getOrNull() }
+            segmentsExact = exact != null
+            segmentsRaw = exact ?: Repo.segments(videoId)
         }
         // Preview pictures while skipping: only your server's ready-made ones (Emby / Jellyfin).
         embyId?.let { id -> lifecycleScope.launch { thumbs = com.maxim.marquee.data.Emby.seekThumbnails(id) } }
@@ -656,7 +668,13 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             ui.buffered = player.bufferedPosition
             val now = System.currentTimeMillis()
 
-            // Skip intro / recap
+            // Skip intro / recap: community timings are lined up with this file once its length is known.
+            val raw = segmentsRaw
+            val fitFor = if (raw == null || dur <= 0) null else listOf(System.identityHashCode(raw), merged)
+            if (raw != null && fitFor != null && fitFor != segmentsFitFor) {
+                segments = fitSegments(raw, dur)
+                segmentsFitFor = fitFor
+            }
             val seg = segments
             val segs = listOfNotNull(
                 seg?.intro?.let { "Skip Intro" to it },
@@ -707,6 +725,32 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
                 ui.badges = qualityBadges()
             }
         }
+    }
+
+    /**
+     * Community timings are measured on one release of the episode. If this file is a different
+     * cut (extended, "superfan", another region's edit: clearly another length) they would point
+     * at the wrong scene, so they're dropped. In a file holding several episodes, a later part's
+     * timings are moved to where that part starts, and the credits belong to the last part only.
+     */
+    private fun fitSegments(s: Repo.Segments, dur: Long): Repo.Segments? {
+        if (segmentsExact) return s
+        val inFile = when {
+            parts > 1 -> parts
+            merged -> groupParts
+            else -> 1
+        }
+        if (runtimeMs > 0) {
+            val per = dur / inFile
+            val tolerance = maxOf(3 * 60_000L, runtimeMs * 15 / 100)
+            if (kotlin.math.abs(per - runtimeMs) > tolerance) {
+                android.util.Log.i("Marquee", "skip timings ignored: file is ${per / 60_000} min per episode, timings are for ~${runtimeMs / 60_000} min")
+                return null
+            }
+        }
+        val off = if (parts > 1 && part > 0) dur * part / parts else 0L
+        fun shift(g: Repo.Segment?) = g?.let { it.copy(startMs = it.startMs + off, endMs = it.endMs + off) }
+        return Repo.Segments(shift(s.intro), shift(s.recap), if (inFile > 1) null else s.outro)
     }
 
     private fun flash(text: String) {

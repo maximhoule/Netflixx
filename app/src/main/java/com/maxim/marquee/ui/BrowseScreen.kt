@@ -261,9 +261,9 @@ fun BrowseScreen(model: AppModel, b: BrowseState, active: Boolean = true) {
                     CompositionLocalProvider(LocalBringIntoViewSpec provides colSpec) {
                         LazyColumn(
                             state = b.columnState,
-                            modifier = Modifier.fillMaxSize()
-                                .focusProperties { enter = { cardEntry() } }
-                                .focusGroup(),
+                            // From Play / More Info: into the row below, at its first poster
+                            // (each row decides, see CatalogRow).
+                            modifier = Modifier.fillMaxSize().focusGroup(),
                             contentPadding = PaddingValues(bottom = 300.dp),
                         ) {
                             items(b.rows, key = { it.key }) { row ->
@@ -380,7 +380,7 @@ private fun TrailerLayer(model: AppModel) {
     )
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Composable
 fun CatalogRow(
     model: AppModel,
@@ -418,8 +418,21 @@ fun CatalogRow(
             SkeletonRow(rowShape)
         } else {
             CompositionLocalProvider(LocalBringIntoViewSpec provides rowSpec) {
+                val rowState = b.rowState(row.key)
+                val edgePx = with(LocalDensity.current) { 40.dp.toPx() }
                 LazyRow(
-                    state = b.rowState(row.key),
+                    state = rowState,
+                    // Moving up or down into this row: the first poster showing at its left edge
+                    // (the very first one unless you've scrolled this row), never the one that
+                    // happens to sit under the card you came from.
+                    modifier = Modifier
+                        .focusProperties {
+                            enter = {
+                                val i = rowState.firstVisibleItemIndex + if (rowState.firstVisibleItemScrollOffset > edgePx) 1 else 0
+                                b.cardRequesters["${row.key}#$i"] ?: b.cardRequesters["${row.key}#${rowState.firstVisibleItemIndex}"] ?: FocusRequester.Default
+                            }
+                        }
+                        .focusGroup(),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                 ) {

@@ -94,7 +94,10 @@ object C {
     val Green = Color(0xFF46D369)
 }
 
-val RAIL = 72.dp
+/** Left margin of the tab screens (the menu is a bar along the top). */
+val RAIL = 32.dp
+/** Height of the menu bar along the top. */
+val TOP_BAR = 56.dp
 
 /** Focusable, clickable box with the TV "grow + outline on focus" treatment. */
 @Composable
@@ -202,6 +205,8 @@ fun PosterCard(
     topRank: Int? = null,
     /** Widen into a landscape preview after resting on the card (portrait cards only). */
     expandable: Boolean = false,
+    /** Show the IMDb score in the corner (catalog rows). */
+    showRating: Boolean = false,
     onClick: () -> Unit,
 ) {
     val baseW = if (shape == CardShape.POSTER) width else shape.width
@@ -275,6 +280,9 @@ fun PosterCard(
                         .background(Color(0xCC000000), RoundedCornerShape(3.dp))
                         .padding(horizontal = 5.dp, vertical = 2.dp),
                 )
+            }
+            if (item.badge == null && showRating) item.meta.imdbRating?.takeIf { it.isNotBlank() && it != "0" && it != "0.0" }?.let {
+                ImdbBadge(it, Modifier.align(Alignment.TopStart).padding(6.dp))
             }
             if (topRank != null) TopBadge(Modifier.align(Alignment.TopEnd))
             if (ribbon != null && item.progress == null) Ribbon(ribbon, Modifier.align(Alignment.BottomCenter))
@@ -431,7 +439,7 @@ fun ActionButton(
 
 /** Full-bleed artwork that fades into black on the left and bottom. */
 @Composable
-fun Backdrop(url: String?, modifier: Modifier = Modifier, video: (@Composable () -> Unit)? = null) {
+fun Backdrop(url: String?, modifier: Modifier = Modifier, wide: Boolean = false, video: (@Composable () -> Unit)? = null) {
     // Keep showing the current picture until the next one is decoded, then crossfade:
     // no flash of black between titles.
     val ctx = androidx.compose.ui.platform.LocalContext.current
@@ -455,16 +463,31 @@ fun Backdrop(url: String?, modifier: Modifier = Modifier, video: (@Composable ()
             }
         }
         video?.invoke()
-        Box(
-            Modifier.matchParentSize().background(
-                Brush.horizontalGradient(0f to C.Bg, 0.3f to C.Bg.copy(alpha = 0.75f), 0.65f to Color.Transparent),
-            ),
-        )
-        Box(
-            Modifier.matchParentSize().background(
-                Brush.verticalGradient(0.45f to Color.Transparent, 1f to C.Bg),
-            ),
-        )
+        if (wide) {
+            // Full-screen picture: a soft shade on the left for the text, the top for the menu,
+            // and a fade into black at the bottom.
+            Box(
+                Modifier.matchParentSize().background(
+                    Brush.horizontalGradient(0f to C.Bg.copy(alpha = 0.88f), 0.38f to C.Bg.copy(alpha = 0.55f), 0.7f to Color.Transparent),
+                ),
+            )
+            Box(
+                Modifier.matchParentSize().background(
+                    Brush.verticalGradient(0f to C.Bg.copy(alpha = 0.55f), 0.16f to Color.Transparent, 0.6f to Color.Transparent, 1f to C.Bg),
+                ),
+            )
+        } else {
+            Box(
+                Modifier.matchParentSize().background(
+                    Brush.horizontalGradient(0f to C.Bg, 0.3f to C.Bg.copy(alpha = 0.75f), 0.65f to Color.Transparent),
+                ),
+            )
+            Box(
+                Modifier.matchParentSize().background(
+                    Brush.verticalGradient(0.45f to Color.Transparent, 1f to C.Bg),
+                ),
+            )
+        }
     }
 }
 
@@ -772,6 +795,91 @@ fun KeepAlive(visible: Boolean, modifier: Modifier = Modifier, content: @Composa
             val w = constraints.constrainWidth(placeables.maxOfOrNull { it.width } ?: 0)
             val h = constraints.constrainHeight(placeables.maxOfOrNull { it.height } ?: 0)
             layout(w, h) { placeables.forEach { it.place(0, 0) } }
+        }
+    }
+}
+
+/** "IMDb 7.5" corner badge. */
+@Composable
+fun ImdbBadge(rating: String, modifier: Modifier = Modifier) {
+    Row(
+        modifier.background(Color(0xD9000000), RoundedCornerShape(3.dp)).padding(start = 2.dp, end = 5.dp, top = 2.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "IMDb", color = Color.Black, fontSize = 8.sp, fontWeight = FontWeight.Black,
+            modifier = Modifier.background(Color(0xFFF5C518), RoundedCornerShape(2.dp)).padding(horizontal = 3.dp),
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(rating, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+/**
+ * A button with a ring around it while focused: [primary] is solid white (Play), the other kind
+ * is translucent grey; both keep their look and get the ring, so focus is always clear.
+ */
+@Composable
+fun PillButton(
+    text: String,
+    icon: ImageVector? = null,
+    primary: Boolean = false,
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null,
+    onFocus: () -> Unit = {},
+    onClick: () -> Unit,
+) {
+    Tile(
+        modifier = modifier.height(50.dp),
+        shape = RoundedCornerShape(10.dp),
+        focusedScale = 1.04f,
+        border = false,
+        focusRequester = focusRequester,
+        onFocus = onFocus,
+        onClick = onClick,
+    ) { f ->
+        val bg = when {
+            primary -> Color.White
+            f -> Color.White
+            else -> Color(0x806D6D6E)
+        }
+        val fg = if (primary || f) Color.Black else Color.White
+        Row(
+            Modifier
+                .fillMaxHeight()
+                .border(2.dp, if (f) Color.White else Color.Transparent, RoundedCornerShape(10.dp))
+                .padding(4.dp)
+                .background(bg, RoundedCornerShape(6.dp))
+                .padding(horizontal = 18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (icon != null) {
+                Icon(icon, null, tint = fg, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(9.dp))
+            }
+            Text(text, color = fg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        }
+    }
+}
+
+/** A round outlined icon button (white when focused); its name is shown by the screen. */
+@Composable
+fun RoundAction(icon: ImageVector, label: String, onFocus: () -> Unit = {}, onClick: () -> Unit) {
+    Tile(
+        modifier = Modifier.size(46.dp),
+        shape = RoundedCornerShape(23.dp),
+        focusedScale = 1.08f,
+        border = false,
+        onFocus = onFocus,
+        onClick = onClick,
+    ) { f ->
+        Box(
+            Modifier.fillMaxSize()
+                .background(if (f) Color.White else Color(0x26FFFFFF), RoundedCornerShape(23.dp))
+                .border(1.5.dp, if (f) Color.White else Color(0x80FFFFFF), RoundedCornerShape(23.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, label, tint = if (f) Color.Black else Color.White, modifier = Modifier.size(22.dp))
         }
     }
 }

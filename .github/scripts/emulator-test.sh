@@ -16,7 +16,12 @@ shot() {
 key() { for k in "$@"; do adb shell input keyevent "$k"; sleep 0.4; done; }
 fast() { for i in $(seq 1 "$2"); do adb shell input keyevent "$1"; done; }
 # Side menu: 0 profile, 1 search, 2 home, 3 sports, 4 series, 5 movies, 6 my list, 7 settings
-tab() { fast DPAD_LEFT 8; sleep 0.6; fast DPAD_UP 10; [ "$1" -gt 0 ] && fast DPAD_DOWN "$1"; key DPAD_CENTER; }
+# The menu is a bar along the top: Home, Series, Movies, Sports, My List, Settings, Search, Profile.
+# (Numbers kept from the old side menu: 0 profile, 1 search, 2 home, 3 sports, 4 series, 5 movies, 6 my list, 7 settings.)
+tab() {
+  case "$1" in 2) n=0;; 4) n=1;; 5) n=2;; 3) n=3;; 6) n=4;; 7) n=5;; 1) n=6;; 0) n=7;; *) n=0;; esac
+  fast DPAD_UP 60; sleep 0.6; fast DPAD_LEFT 10; [ "$n" -gt 0 ] && fast DPAD_RIGHT "$n"; key DPAD_CENTER
+}
 measure_start() { adb shell dumpsys gfxinfo $PKG reset >/dev/null; }
 measure_end() {
   adb shell dumpsys gfxinfo $PKG framestats > "$OUT/frames/$1.txt"
@@ -65,10 +70,12 @@ summary "== details"
 measure_start
 key DPAD_DOWN DPAD_DOWN DPAD_RIGHT; sleep 2
 key DPAD_CENTER; sleep 7; shot detail
-key DPAD_DOWN; sleep 2; key DPAD_DOWN DPAD_DOWN; sleep 3; shot detail_more
-key DPAD_LEFT; sleep 1; key DPAD_DOWN; sleep 2; shot detail_seasons
-# Back while browsing episodes returns to the actions; the trailer button is next to Play.
-key BACK; sleep 2; key DPAD_RIGHT; sleep 1; shot detail_trailer_button
+# Right through the buttons into the side panel (episodes, or similar titles for a film).
+fast DPAD_RIGHT 8; sleep 2; shot detail_more
+key DPAD_DOWN DPAD_DOWN; sleep 2; shot detail_panel_down
+key DPAD_UP DPAD_UP DPAD_UP DPAD_UP; sleep 1; shot detail_seasons
+# Left out of the panel returns to Play; the trailer button is next to it.
+key DPAD_LEFT DPAD_LEFT DPAD_LEFT; sleep 1; key DPAD_RIGHT; sleep 1; shot detail_trailer_button
 key DPAD_CENTER; sleep 12; shot trailer_screen
 key BACK; sleep 3; key BACK; sleep 3; shot back_from_detail
 measure_end details

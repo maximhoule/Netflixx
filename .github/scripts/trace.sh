@@ -10,7 +10,12 @@ step() { echo "$(date +%T) $* | device: $(timeout 10 adb get-state 2>&1) | app p
 trap 'step "script end"; timeout 30 adb logcat -d > "$OUT/logcat.txt" 2>&1' EXIT
 key() { for k in "$@"; do adb shell input keyevent "$k"; sleep 0.4; done; }
 fast() { for i in $(seq 1 "$2"); do adb shell input keyevent "$1"; done; }
-tab() { fast DPAD_LEFT 8; sleep 0.6; fast DPAD_UP 10; [ "$1" -gt 0 ] && fast DPAD_DOWN "$1"; key DPAD_CENTER; }
+# The menu is a bar along the top: Home, Series, Movies, Sports, My List, Settings, Search, Profile.
+# (Numbers kept from the old side menu: 0 profile, 1 search, 2 home, 3 sports, 4 series, 5 movies, 6 my list, 7 settings.)
+tab() {
+  case "$1" in 2) n=0;; 4) n=1;; 5) n=2;; 3) n=3;; 6) n=4;; 7) n=5;; 1) n=6;; 0) n=7;; *) n=0;; esac
+  fast DPAD_UP 60; sleep 0.6; fast DPAD_LEFT 10; [ "$n" -gt 0 ] && fast DPAD_RIGHT "$n"; key DPAD_CENTER
+}
 KBD=""
 hold() { # hold LINUX_KEYCODE SECONDS: a real held button (Android auto-repeats it)
   [ -z "$KBD" ] && KBD=$(adb shell getevent -pl 2>/dev/null | tr -d '\r' | awk '/add device/{d=$4} /KEY_RIGHT/{print d; exit}')

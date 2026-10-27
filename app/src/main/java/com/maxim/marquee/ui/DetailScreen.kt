@@ -624,16 +624,15 @@ private fun EpisodeRow(
     Tile(
         modifier = Modifier.fillMaxWidth().height(96.dp),
         shape = RoundedCornerShape(12.dp),
-        focusedScale = 1f,
-        border = false,
+        focusedScale = 1.02f,
+        border = true,
         focusRequester = focusRequester,
         onClick = onClick,
     ) { f ->
         Row(
             Modifier
                 .fillMaxSize()
-                .background(if (f) Color(0x1AFFFFFF) else Color.Transparent)
-                .border(2.5.dp, if (f) Color.White else Color.Transparent, RoundedCornerShape(12.dp))
+                .background(if (f) Color(0xFF2A2A2A) else Color.Transparent)
                 .padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

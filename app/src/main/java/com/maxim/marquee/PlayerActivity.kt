@@ -12,6 +12,7 @@ import android.view.KeyEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.annotation.OptIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.graphics.asImageBitmap
@@ -241,8 +242,11 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         player.playWhenReady = true
 
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
-                PlayerScreen(this, ui, playerView)
+            MaterialTheme(colorScheme = darkColorScheme(), typography = com.maxim.marquee.ui.AppTypography) {
+                androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+                    PlayerScreen(this, ui, playerView)
+                    PerfOverlay(androidx.compose.ui.Modifier.align(androidx.compose.ui.Alignment.TopEnd))
+                }
             }
         }
 
@@ -1189,6 +1193,16 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             )
         }
         super.finish()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        PerfMonitor.attach(this)
+    }
+
+    override fun onPause() {
+        PerfMonitor.detach()
+        super.onPause()
     }
 
     override fun onStop() {

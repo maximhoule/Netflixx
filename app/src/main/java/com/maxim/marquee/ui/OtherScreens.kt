@@ -501,6 +501,13 @@ fun SettingsScreen(model: AppModel) {
         SettingRow("Sports recaps & highlights", if (Store.showRecaps) "Shown" else "Hidden", "Replays of past games in your sports rows") {
             model.setShowRecaps(!Store.showRecaps); version++
         }
+        val act = LocalContext.current as? android.app.Activity
+        SettingRow(
+            "Performance overlay", onOff(com.maxim.marquee.PerfMonitor.enabled),
+            "Shows how fast the TV draws each frame, in the corner. For tracking down stutter",
+        ) {
+            act?.let { com.maxim.marquee.PerfMonitor.setEnabled(it, !com.maxim.marquee.PerfMonitor.enabled) }; version++
+        }
         SettingRow("Expanding cards", onOff(Store.expandCards), "Posters widen into a preview when you rest on them") {
             Store.expandCards = !Store.expandCards; version++
         }

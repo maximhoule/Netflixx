@@ -193,6 +193,11 @@ object Store {
         get() = global.getBoolean("autoUpdate", prefsFor(0).getBoolean("autoUpdate", true))
         set(v) = global.edit().putBoolean("autoUpdate", v).apply()
 
+    /** The frame-timing box in the corner (Settings → Performance overlay). */
+    var perfOverlay: Boolean
+        get() = global.getBoolean("perfOverlay", false)
+        set(v) = global.edit().putBoolean("perfOverlay", v).apply()
+
     /** Netflix-style cards that widen into a preview when you rest on them. */
     var expandCards: Boolean
         get() = global.getBoolean("expandCards", true)

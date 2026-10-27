@@ -157,16 +157,15 @@ private fun CalendarCard(e: AppModel.CalEntry, upcoming: Boolean, fr: FocusReque
     Tile(
         modifier = Modifier.width(CAL_W),
         shape = RoundedCornerShape(10.dp),
-        focusedScale = 1.05f,
-        border = false,
+        focusedScale = 1.06f,
+        border = true,
         focusRequester = fr,
         onClick = onClick,
     ) { f ->
         Column(
             Modifier
                 .fillMaxWidth()
-                .background(if (f) Color(0xFF2A2A2A) else Color(0xFF161616))
-                .border(2.5.dp, if (f) Color.White else Color.Transparent, RoundedCornerShape(10.dp)),
+                .background(if (f) Color(0xFF2A2A2A) else Color(0xFF161616)),
         ) {
             Box(Modifier.fillMaxWidth().height(CAL_W * 9f / 16f).clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp)).background(C.Surface)) {
                 val img = e.ep.thumbnail ?: e.meta.background ?: e.meta.poster

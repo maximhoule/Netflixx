@@ -48,6 +48,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -100,7 +101,11 @@ val RAIL = 32.dp
 /** Height of the menu bar along the top. */
 val TOP_BAR = 56.dp
 
-/** Focusable, clickable box with the TV "grow + outline on focus" treatment. */
+/**
+ * Focusable, clickable box. With [border] (cards: posters, episodes, calendar), focus is the app's
+ * one card look: a slight lift, a white outline and a soft white glow around it. Without it the
+ * content draws its own focus (buttons and menu items turn white).
+ */
 @Composable
 fun Tile(
     modifier: Modifier = Modifier,
@@ -153,6 +158,7 @@ fun Tile(
                     else -> false
                 }
             }
+            .then(if (focused && border) Modifier.focusGlow(shape) else Modifier)
             .clip(shape)
             .then(if (focused && border) Modifier.border(3.dp, Color.White, shape) else Modifier)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
@@ -928,4 +934,18 @@ private fun isDarkLogo(b: android.graphics.Bitmap): Boolean = try {
     n >= 12 && sum / n < 60
 } catch (e: Exception) {
     false
+}
+
+/** Soft white light around a focused card (drawn only for the one card that has focus). */
+private fun Modifier.focusGlow(shape: Shape): Modifier = this.drawWithCache {
+    val outline = shape.createOutline(size, layoutDirection, this)
+    val radius = (outline as? androidx.compose.ui.graphics.Outline.Rounded)?.roundRect?.topLeftCornerRadius?.x ?: 0f
+    val blur = 14.dp.toPx()
+    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.WHITE
+        setShadowLayer(blur, 0f, 0f, android.graphics.Color.argb(150, 255, 255, 255))
+    }
+    onDrawBehind {
+        drawContext.canvas.nativeCanvas.drawRoundRect(0f, 0f, size.width, size.height, radius, radius, paint)
+    }
 }

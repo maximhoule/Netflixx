@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
@@ -172,11 +173,13 @@ class MainActivity : ComponentActivity() {
         window.decorView.post { if (window.decorView.isInTouchMode) window.decorView.requestFocusFromTouch() }
         model.resumeTrailer()
         model.onResume()
+        PerfMonitor.attach(this)
         model.checkForUpdate()
     }
 
     override fun onPause() {
         isForeground = false
+        PerfMonitor.detach()
         model.pauseTrailer()
         model.onPause()
         super.onPause()
@@ -186,7 +189,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AppRoot(model: AppModel, exit: () -> Unit) {
     val railRequesters = remember { Tab.entries.associateWith { FocusRequester() } }
-    MaterialTheme(colorScheme = darkColorScheme(primary = C.Red, background = C.Bg, surface = C.Surface)) {
+    MaterialTheme(colorScheme = darkColorScheme(primary = C.Red, background = C.Bg, surface = C.Surface), typography = com.maxim.marquee.ui.AppTypography) {
         Box(
             Modifier
                 .fillMaxSize()
@@ -249,6 +252,7 @@ fun AppRoot(model: AppModel, exit: () -> Unit) {
                 BackHandler { model.cancelLoading() }
             }
             model.updateStatus?.let { UpdateBanner(it, model.updateProgress) }
+            PerfOverlay(Modifier.align(Alignment.TopEnd))
         }
     }
 }

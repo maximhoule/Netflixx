@@ -459,7 +459,7 @@ fun CatalogRow(
                             }
                         }
                         .focusGroup(),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     itemsIndexed(items, key = { i, it -> "$i|${it.meta.id}" }) { i, item ->

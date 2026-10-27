@@ -1,5 +1,7 @@
 package com.maxim.marquee.ui
 
+import androidx.compose.foundation.layout.heightIn
+
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
@@ -222,9 +224,13 @@ fun CardMenuOverlay(model: AppModel) {
     Box(Modifier.fillMaxSize().background(Color(0xCC000000)), contentAlignment = Alignment.Center) {
         Column(
             Modifier.width(420.dp)
+                // Taller than the screen with many options: it scrolls, following the focus.
+                .heightIn(max = 500.dp)
                 .focusProperties { exit = { FocusRequester.Cancel } }
                 .focusGroup()
-                .background(Color(0xFF181818), RoundedCornerShape(10.dp)).padding(24.dp),
+                .background(Color(0xFF181818), RoundedCornerShape(10.dp))
+                .verticalScroll(androidx.compose.foundation.rememberScrollState())
+                .padding(24.dp),
         ) {
             Text(meta.name, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             m.item.badge?.let { Text(it, color = C.Dim, fontSize = 14.sp) }
@@ -274,7 +280,7 @@ fun CardMenuOverlay(model: AppModel) {
                 ) { f ->
                     Text(
                         label, color = if (f) Color.Black else Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.fillMaxWidth().background(if (f) Color.White else Color(0x1AFFFFFF)).padding(horizontal = 18.dp, vertical = 13.dp),
+                        modifier = Modifier.fillMaxWidth().background(if (f) Color.White else Color(0x1AFFFFFF)).padding(horizontal = 18.dp, vertical = 11.dp),
                     )
                 }
             }

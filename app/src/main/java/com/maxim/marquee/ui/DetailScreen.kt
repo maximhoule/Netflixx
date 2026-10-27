@@ -1,5 +1,9 @@
 package com.maxim.marquee.ui
 
+import androidx.compose.foundation.verticalScroll
+
+import androidx.compose.foundation.layout.heightIn
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -787,9 +791,11 @@ private fun WatchMenu(model: AppModel, meta: MetaItem, ep: Video?, episodes: Lis
         Column(
             Modifier
                 .width(440.dp)
+                .heightIn(max = 500.dp)
                 .focusProperties { exit = { FocusRequester.Cancel } }
                 .focusGroup()
                 .background(Color(0xFF181818), RoundedCornerShape(12.dp))
+                .verticalScroll(androidx.compose.foundation.rememberScrollState())
                 .padding(22.dp),
         ) {
             Text(meta.name, color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)

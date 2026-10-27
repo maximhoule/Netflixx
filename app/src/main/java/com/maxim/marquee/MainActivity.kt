@@ -165,6 +165,18 @@ class MainActivity : ComponentActivity() {
 
     var isForeground = false
 
+    /** "open this section" from a launcher shortcut or the test script: am start … --es tab CALENDAR */
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getStringExtra("tab")?.let { name ->
+            Tab.entries.firstOrNull { it.name.equals(name, true) }?.let { t ->
+                while (model.back()) Unit
+                model.selectTab(t)
+            }
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         isForeground = true

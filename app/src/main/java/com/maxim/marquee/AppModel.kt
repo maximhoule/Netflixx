@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
@@ -43,6 +44,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
@@ -59,6 +61,7 @@ enum class Tab(val label: String, val icon: ImageVector) {
     SERIES("Series", TvIcon),
     MOVIES("Movies", MovieIcon),
     MYLIST("My List", Icons.Filled.Add),
+    CALENDAR("Calendar", Icons.Filled.DateRange),
     SETTINGS("Settings", Icons.Filled.Settings),
 }
 
@@ -103,6 +106,8 @@ sealed class RowSource {
     data class Trakt(val kind: String) : RowSource()
     /** Netflix-style Top 10 for "movie" or "series". */
     data class Top10(val type: String) : RowSource()
+    /** "Because you watched …": titles like one you watched recently. */
+    data class Because(val type: String, val id: String) : RowSource()
 }
 
 data class RowModel(val key: String, val title: String, val source: RowSource)
@@ -539,6 +544,13 @@ class AppModel(private val activity: MainActivity) {
                 }
                 else -> catalogRows.add(minOf(1, catalogRows.size), top10Row(b.type))
             }
+            // "Because you watched …" for the last couple of titles you watched, spread down the page.
+            becauseSeeds(b.type).forEachIndexed { k, seed ->
+                catalogRows.add(
+                    minOf(if (k == 0) 1 else 4, catalogRows.size),
+                    RowModel("because-${seed.type}-${seed.id}", "Because you watched ${seed.name}", RowSource.Because(seed.type, seed.id)),
+                )
+            }
             if (Repo.addons.isNotEmpty()) defs += catalogRows
             // After your usual rows, not in front of them.
             defs += embyRows
@@ -567,6 +579,21 @@ class AppModel(private val activity: MainActivity) {
                 b.rowItems[row.key] = continueItems(); b.loaded[row.key] = true; afterRowLoaded(b)
             }
             is RowSource.Static -> b.loaded[row.key] = true
+            is RowSource.Because -> {
+                scope.launch {
+                    val seen = HashSet<String>()
+                    library.filter { it.lastWatched > 0 || it.timeOffset > 0 }.forEach { seen += it.id }
+                    Store.allProgress().forEach { seen += it.metaId }
+                    val meta = Repo.meta(src.type, src.id)
+                    val items = meta?.let { relatedFor(it) }.orEmpty()
+                        // Not things you've already watched or started.
+                        .filter { it.id !in seen }
+                        .map { CardItem(it) }
+                    b.rowItems[row.key] = items
+                    b.loaded[row.key] = true
+                    afterRowLoaded(b)
+                }
+            }
             is RowSource.NewEpisodes -> {
                 b.rowItems[row.key] = newEpisodes; b.loaded[row.key] = true; afterRowLoaded(b)
             }
@@ -1660,12 +1687,100 @@ class AppModel(private val activity: MainActivity) {
 
     // ---------------- More Like This / collections ----------------
 
+    private data class Seed(val type: String, val id: String, val name: String)
+
+    /** The last titles you watched (shows and films from your addons), newest first, for "Because you watched". */
+    private fun becauseSeeds(type: String?): List<Seed> {
+        val times = HashMap<String, Pair<Long, Seed>>()
+        fun add(t: String, id: String, name: String, time: Long) {
+            if (com.maxim.marquee.data.Emby.isEmby(id) || !id.startsWith("tt") || name.isBlank()) return
+            if (t != "movie" && t != "series") return
+            if (type != null && t != type) return
+            val old = times[id]
+            if (old == null || time > old.first) times[id] = time to Seed(t, id, name)
+        }
+        library.forEach { e -> if (e.lastWatched > 0) add(e.type, e.id, e.name, e.lastWatched) }
+        Store.allProgress().forEach { p -> add(p.type, p.metaId, p.name, p.updated) }
+        return times.values.sortedByDescending { it.first }.map { it.second }.take(2)
+    }
+
+    // ---------------- Calendar ----------------
+
+    data class CalEntry(val meta: MetaItem, val ep: Video, val watched: Boolean)
+    /** One day of the calendar. [day] counts days since 1970 (air dates are calendar dates). */
+    data class CalDay(val day: Long, val entries: List<CalEntry>)
+
+    /** Episodes of your shows from a week ago to six weeks ahead; null while it's being worked out. */
+    var calendar by mutableStateOf<List<CalDay>?>(null)
+        private set
+    private var calendarAt = 0L
+
+    fun loadCalendar(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && calendar != null && now - calendarAt < 3_600_000L) return
+        calendarAt = now
+        scope.launch {
+            // Shows you follow or have watched, most recent first.
+            val ids = LinkedHashMap<String, Long>()
+            library.filter { it.type == "series" && (!it.removed || it.temp) && !it.noNotif }
+                .forEach { ids[it.id] = maxOf(ids[it.id] ?: 0, watchedAt(it)) }
+            Store.allProgress().filter { it.type == "series" }.forEach { ids[it.metaId] = maxOf(ids[it.metaId] ?: 0, it.updated) }
+            val shows = ids.entries.filter { !com.maxim.marquee.data.Emby.isEmby(it.key) }
+                .sortedByDescending { it.value }.take(80).map { it.key }
+            val dayMs = 86_400_000L
+            val today = now / dayMs
+            val from = (today - 7) * dayMs
+            val to = (today + 43) * dayMs
+            val gate = kotlinx.coroutines.sync.Semaphore(4)
+            val entries = shows.map { id ->
+                scope.async {
+                    gate.acquire()
+                    try {
+                        val meta = Repo.meta("series", id) ?: return@async emptyList()
+                        meta.videos.filter { it.season > 0 && it.released in from until to }
+                            .map { CalEntry(meta, it, watched(meta.id, it.id)) }
+                    } catch (e: Exception) {
+                        emptyList()
+                    } finally {
+                        gate.release()
+                    }
+                }
+            }.awaitAll().flatten()
+            calendar = entries.groupBy { it.ep.released / dayMs }
+                .map { (d, l) -> CalDay(d, l.sortedWith(compareBy({ it.meta.name }, { it.ep.season }, { it.ep.episode }))) }
+                .sortedBy { it.day }
+        }
+    }
+
+    /** "Today", "Tomorrow", "Yesterday" or "Wednesday, Oct 29". */
+    fun calendarLabel(day: Long): String {
+        val local = java.util.Calendar.getInstance()
+        val todayLocal = java.time.LocalDate.of(local.get(java.util.Calendar.YEAR), local.get(java.util.Calendar.MONTH) + 1, local.get(java.util.Calendar.DAY_OF_MONTH)).toEpochDay()
+        return when (day - todayLocal) {
+            0L -> "Today"
+            1L -> "Tomorrow"
+            -1L -> "Yesterday"
+            else -> java.time.LocalDate.ofEpochDay(day).format(java.time.format.DateTimeFormatter.ofPattern("EEEE, MMM d", java.util.Locale.getDefault()))
+        }
+    }
+
+    /** Today's date in the same "days since 1970" count the calendar uses. */
+    fun calendarToday(): Long {
+        val c = java.util.Calendar.getInstance()
+        return java.time.LocalDate.of(c.get(java.util.Calendar.YEAR), c.get(java.util.Calendar.MONTH) + 1, c.get(java.util.Calendar.DAY_OF_MONTH)).toEpochDay()
+    }
+
     suspend fun relatedFor(meta: MetaItem): List<MetaItem> {
         if (com.maxim.marquee.data.Emby.isEmby(meta.id)) return emptyList()
         val fromTrakt = com.maxim.marquee.data.Trakt.related(meta.type, meta.id)
         val list = if (fromTrakt.isNotEmpty()) fromTrakt else {
-            val genre = meta.genres.firstOrNull() ?: return emptyList()
-            Repo.genreCatalog(meta.type, genre)
+            // Without Trakt: titles from its top two genres, the ones sharing the most genres first.
+            val genres = meta.genres.take(2)
+            if (genres.isEmpty()) return emptyList()
+            val lists = coroutineScope { genres.map { g -> async { Repo.genreCatalog(meta.type, g) } }.awaitAll() }
+            val inBoth = if (lists.size > 1) lists[0].map { it.id }.toSet() intersect lists[1].map { it.id }.toSet() else emptySet()
+            lists.flatten().distinctBy { it.id }
+                .sortedByDescending { m -> m.genres.count { it in meta.genres } + (if (m.id in inBoth) 2 else 0) }
         }
         return list.filter { it.id != meta.id }.distinctBy { it.id }.take(24)
     }

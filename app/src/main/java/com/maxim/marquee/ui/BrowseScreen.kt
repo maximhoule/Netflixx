@@ -104,6 +104,7 @@ fun MainShell(model: AppModel, railRequesters: Map<Tab, FocusRequester>, active:
                 when (model.tab) {
                     Tab.SEARCH -> SearchScreen(model)
                     Tab.MYLIST -> MyListScreen(model)
+                    Tab.CALENDAR -> CalendarScreen(model)
                     Tab.SETTINGS -> SettingsScreen(model)
                     else -> Unit
                 }
@@ -113,7 +114,7 @@ fun MainShell(model: AppModel, railRequesters: Map<Tab, FocusRequester>, active:
     }
 }
 
-private val NAV_TEXT_TABS = listOf(Tab.HOME, Tab.SERIES, Tab.MOVIES, Tab.SPORTS, Tab.MYLIST, Tab.SETTINGS)
+private val NAV_TEXT_TABS = listOf(Tab.HOME, Tab.SERIES, Tab.MOVIES, Tab.SPORTS, Tab.MYLIST, Tab.CALENDAR, Tab.SETTINGS)
 
 /** The menu: logo, the sections as words, search and your profile on the right. */
 @OptIn(ExperimentalComposeUiApi::class)

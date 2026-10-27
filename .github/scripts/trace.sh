@@ -11,9 +11,9 @@ trap 'step "script end"; timeout 30 adb logcat -d > "$OUT/logcat.txt" 2>&1' EXIT
 key() { for k in "$@"; do adb shell input keyevent "$k"; sleep 0.4; done; }
 fast() { for i in $(seq 1 "$2"); do adb shell input keyevent "$1"; done; }
 # The menu is a bar along the top: Home, Series, Movies, Sports, My List, Settings, Search, Profile.
-# (Numbers kept from the old side menu: 0 profile, 1 search, 2 home, 3 sports, 4 series, 5 movies, 6 my list, 7 settings.)
+# (Numbers kept from the old side menu: 0 profile, 1 search, 2 home, 3 sports, 4 series, 5 movies, 6 my list, 7 settings; 8 calendar.)
 tab() {
-  case "$1" in 2) n=0;; 4) n=1;; 5) n=2;; 3) n=3;; 6) n=4;; 7) n=5;; 1) n=6;; 0) n=7;; *) n=0;; esac
+  case "$1" in 2) n=0;; 4) n=1;; 5) n=2;; 3) n=3;; 6) n=4;; 8) n=5;; 7) n=6;; 1) n=7;; 0) n=8;; *) n=0;; esac
   fast DPAD_UP 60; sleep 0.6; fast DPAD_LEFT 10; [ "$n" -gt 0 ] && fast DPAD_RIGHT "$n"; key DPAD_CENTER
 }
 KBD=""

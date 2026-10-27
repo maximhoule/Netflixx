@@ -127,12 +127,7 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
     }
 
     Box(Modifier.fillMaxSize().background(C.Bg)) {
-        Backdrop(meta.background ?: s.preview.backdropUrl, Modifier.fillMaxSize(), wide = true)
-        Box(
-            Modifier.fillMaxSize().background(
-                Brush.horizontalGradient(0f to Color(0x99000000), 0.55f to Color(0x4D000000), 1f to Color(0x66000000)),
-            ),
-        )
+        Backdrop(meta.background ?: s.preview.backdropUrl, Modifier.fillMaxSize(), wide = true, dim = 0.4f)
         val extras = rememberExtras(meta)
         Column(
             Modifier.fillMaxHeight().width(if (shownSide != null) 540.dp else 720.dp)

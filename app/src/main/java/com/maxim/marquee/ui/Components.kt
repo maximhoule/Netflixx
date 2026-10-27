@@ -76,6 +76,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.TextStyle
@@ -439,7 +440,7 @@ fun ActionButton(
 
 /** Full-bleed artwork that fades into black on the left and bottom. */
 @Composable
-fun Backdrop(url: String?, modifier: Modifier = Modifier, wide: Boolean = false, video: (@Composable () -> Unit)? = null) {
+fun Backdrop(url: String?, modifier: Modifier = Modifier, wide: Boolean = false, dim: Float = 0f, video: (@Composable () -> Unit)? = null) {
     // Keep showing the current picture until the next one is decoded, then crossfade:
     // no flash of black between titles.
     val ctx = androidx.compose.ui.platform.LocalContext.current
@@ -465,16 +466,25 @@ fun Backdrop(url: String?, modifier: Modifier = Modifier, wide: Boolean = false,
         video?.invoke()
         if (wide) {
             // Full-screen picture: a soft shade on the left for the text, the top for the menu,
-            // and a fade into black at the bottom.
+            // and a fade into black at the bottom. Each shade only covers the part of the screen
+            // it darkens (less for the TV's graphics chip to blend on every frame).
             Box(
-                Modifier.matchParentSize().background(
-                    Brush.horizontalGradient(0f to C.Bg.copy(alpha = 0.88f), 0.38f to C.Bg.copy(alpha = 0.55f), 0.7f to Color.Transparent),
-                ),
-            )
-            Box(
-                Modifier.matchParentSize().background(
-                    Brush.verticalGradient(0f to C.Bg.copy(alpha = 0.55f), 0.16f to Color.Transparent, 0.6f to Color.Transparent, 1f to C.Bg),
-                ),
+                Modifier.matchParentSize().drawWithCache {
+                    val w = size.width
+                    val h = size.height
+                    val left = Brush.horizontalGradient(
+                        0f to C.Bg.copy(alpha = 0.88f), 0.54f to C.Bg.copy(alpha = 0.55f), 1f to Color.Transparent,
+                        startX = 0f, endX = w * 0.7f,
+                    )
+                    val top = Brush.verticalGradient(0f to C.Bg.copy(alpha = 0.55f), 1f to Color.Transparent, startY = 0f, endY = h * 0.16f)
+                    val bottom = Brush.verticalGradient(0f to Color.Transparent, 1f to C.Bg, startY = h * 0.6f, endY = h)
+                    onDrawBehind {
+                        if (dim > 0f) drawRect(C.Bg.copy(alpha = dim))
+                        drawRect(left, size = androidx.compose.ui.geometry.Size(w * 0.7f, h))
+                        drawRect(top, size = androidx.compose.ui.geometry.Size(w, h * 0.16f))
+                        drawRect(bottom, topLeft = Offset(0f, h * 0.6f), size = androidx.compose.ui.geometry.Size(w, h * 0.4f))
+                    }
+                },
             )
         } else {
             Box(
@@ -575,12 +585,28 @@ fun TitleArt(meta: MetaItem, modifier: Modifier = Modifier, big: Boolean = true,
         else -> 340.dp to 84.dp
     }
     if (url != null) {
+        val ctx = androidx.compose.ui.platform.LocalContext.current
+        // Some logos are black (made for light pages): those are shown white, like on Netflix.
+        var dark by remember(url) { mutableStateOf(darkLogos[url] == true) }
+        val request = remember(url) {
+            coil.request.ImageRequest.Builder(ctx).data(url).allowHardware(false).build()
+        }
         AsyncImage(
-            model = url,
+            model = request,
             contentDescription = meta.name,
             contentScale = ContentScale.Fit,
             alignment = Alignment.BottomStart,
             onError = { attempt++ },
+            onSuccess = { st ->
+                val known = darkLogos[url]
+                if (known == null) {
+                    val bmp = (st.result.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                    val isDark = bmp != null && isDarkLogo(bmp)
+                    darkLogos[url] = isDark
+                    dark = isDark
+                }
+            },
+            colorFilter = if (dark) androidx.compose.ui.graphics.ColorFilter.tint(Color.White) else null,
             modifier = modifier.height(maxH).width(maxW),
         )
     } else {
@@ -882,4 +908,24 @@ fun RoundAction(icon: ImageVector, label: String, onFocus: () -> Unit = {}, onCl
             Icon(icon, label, tint = if (f) Color.Black else Color.White, modifier = Modifier.size(22.dp))
         }
     }
+}
+
+/** Logos already checked: true = mostly black artwork. */
+private val darkLogos = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+/** Average brightness of the logo's visible pixels (a 24×24 sample) is low. */
+private fun isDarkLogo(b: android.graphics.Bitmap): Boolean = try {
+    var sum = 0.0
+    var n = 0
+    val w = b.width
+    val h = b.height
+    for (y in 0 until 24) for (x in 0 until 24) {
+        val c = b.getPixel(x * (w - 1) / 23, y * (h - 1) / 23)
+        if (android.graphics.Color.alpha(c) < 140) continue
+        sum += 0.299 * android.graphics.Color.red(c) + 0.587 * android.graphics.Color.green(c) + 0.114 * android.graphics.Color.blue(c)
+        n++
+    }
+    n >= 12 && sum / n < 60
+} catch (e: Exception) {
+    false
 }

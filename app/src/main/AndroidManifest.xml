@@ -13,7 +13,7 @@
         android:name=".App"
         android:label="Marquee"
         android:icon="@mipmap/ic_launcher"
-        android:banner="@drawable/banner"
+        android:banner="@drawable/tv_banner"
         android:usesCleartextTraffic="true"
         android:largeHeap="true"
         android:supportsRtl="true"
@@ -21,6 +21,7 @@
 
         <activity
             android:name=".MainActivity"
+            android:banner="@drawable/tv_banner"
             android:exported="true"
             android:launchMode="singleTask"
             android:screenOrientation="landscape"

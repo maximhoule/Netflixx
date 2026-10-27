@@ -571,6 +571,8 @@ private fun ColumnScope.EpisodesPanel(
                     ep.thumbnail?.takeIf { it !in sharedThumbs },
                     embyThumbs["${ep.season}:${ep.episode}"],
                     if (ep.season == season) tmdbThumbs[ep.episode] else null,
+                    // No picture of its own anywhere: the show's artwork.
+                    meta.background ?: meta.poster,
                 ).distinct(),
                 progress = model.progressFor(meta.id, ep.id).also { tick },
                 watched = model.watched(meta.id, ep.id),
@@ -643,7 +645,7 @@ private fun EpisodeRow(
                     .clip(RoundedCornerShape(8.dp))
                     .background(C.Surface),
             ) {
-                // Tries each picture in turn; with none, the episode number (never the show's poster).
+                // Tries each picture in turn (the show's artwork last); the episode number only if none loads.
                 var attempt by remember(images) { mutableIntStateOf(0) }
                 val img = images.getOrNull(attempt)
                 if (img == null) {

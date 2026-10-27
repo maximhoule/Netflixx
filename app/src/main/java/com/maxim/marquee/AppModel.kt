@@ -699,10 +699,17 @@ class AppModel(private val activity: MainActivity) {
         return null
     }
 
+    /** True after the first remote press: from then on, rows arriving never move your focus. */
+    var userNavigated = false
+
     private fun afterRowLoaded(b: BrowseState) {
         val first = b.firstReadyRow() ?: return
-        // Nothing focused yet: start on the first title of the top row (retried until it lands).
-        if (b.lastFocusKey == null) b.pendingFocusKey = "${first.key}#0"
+        // Nothing focused yet, or the app just opened and a row above has filled in (Continue
+        // Watching arrives after the catalogs): start on the first title of the top row.
+        if (b.lastFocusKey == null || (!userNavigated && b.lastFocusKey != "${first.key}#0")) {
+            b.pendingFocusKey = "${first.key}#0"
+            b.rowItems[first.key]?.firstOrNull()?.let { setHero(b, it) }
+        }
         if (b.hero == null) b.rowItems[first.key]?.firstOrNull()?.let { setHero(b, it) }
     }
 
@@ -787,6 +794,8 @@ class AppModel(private val activity: MainActivity) {
 
     // ---------------- progress / continue watching ----------------
 
+    private val SAME_SESSION = 15 * 60_000L
+
     private data class Cand(
         val metaId: String, val type: String, val name: String, val poster: String?,
         val videoId: String, val pos: Long, val dur: Long, val time: Long, val shape: String? = null,
@@ -833,7 +842,12 @@ class AppModel(private val activity: MainActivity) {
         embyEntries.forEach { e ->
             val m = e.card.meta
             val existing = byId[m.id]
-            if (existing == null || e.time > existing.time) {
+            // Playing from your Emby server in Marquee updates both Marquee's record and the
+            // server's (a moment apart, and the server may number episodes differently): ours is
+            // kept unless the server's is clearly later (watched in another app).
+            if (existing != null && e.time > existing.time && e.time - existing.time < SAME_SESSION) {
+                byId[m.id] = existing.copy(time = e.time)
+            } else if (existing == null || e.time > existing.time) {
                 byId[m.id] = Cand(
                     m.id, m.type, m.name, m.poster ?: existing?.poster, e.card.videoId ?: m.id,
                     e.position, e.duration, e.time, m.posterShape ?: existing?.shape, e.card.badge,
@@ -850,7 +864,11 @@ class AppModel(private val activity: MainActivity) {
             // The same show from Stremio and from your Emby server (when the server doesn't know its
             // IMDb id, the two can't be matched by id): keep only the most recent one.
             .groupBy { nameKey(it.type, it.name) }
-            .map { (_, same) -> same.maxBy { it.time } }
+            .map { (_, same) ->
+                val newest = same.maxBy { it.time }
+                val ours = same.filterNot { com.maxim.marquee.data.Emby.isEmby(it.metaId) }.maxByOrNull { it.time }
+                if (ours != null && newest !== ours && newest.time - ours.time < SAME_SESSION) ours.copy(time = newest.time) else newest
+            }
             .sortedByDescending { it.time }
             .take(50)
             .map { c ->

@@ -666,7 +666,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             if (!::player.isInitialized) continue
             val pos = player.currentPosition
             val dur = player.duration.takeIf { it > 0 && it != C.TIME_UNSET } ?: 0L
-            ui.position = pos
+            ui.position = seekTarget ?: pos
             ui.duration = dur
             ui.live = player.isCurrentMediaItemLive
             ui.buffered = player.bufferedPosition
@@ -873,9 +873,13 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         }
     }
 
+    /** Where a burst of skip presses is heading; the player jumps there once you pause pressing. */
+    private var seekTarget: Long? = null
+    private var seekJob: kotlinx.coroutines.Job? = null
+
     override fun seekBy(ms: Long) {
         val dur = player.duration.takeIf { it > 0 && it != C.TIME_UNSET } ?: Long.MAX_VALUE
-        val from = player.currentPosition
+        val from = seekTarget ?: player.currentPosition
         val target = (from + ms).coerceIn(0, dur)
         // Fast-forwarding by hand into or through an intro/recap: you're skipping it yourself,
         // so no "Skip Intro" button (or automatic skip) for it afterwards.
@@ -885,10 +889,21 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             }
             if (ui.skip != null) ui.skip = null
         }
-        player.seekTo(target)
+        // Several presses in a row add up and the player makes one jump at the end, to the
+        // nearest keyframe: no decoding (and no picture/sound catching up) between presses.
+        seekTarget = target
         ui.position = target
         if (!ui.controls) flash((if (ms < 0) "◀◀  " else "▶▶  ") + formatTime(target))
         showThumb(target)
+        seekJob?.cancel()
+        seekJob = lifecycleScope.launch {
+            delay(350)
+            val t = seekTarget ?: return@launch
+            seekTarget = null
+            player.setSeekParameters(androidx.media3.exoplayer.SeekParameters.CLOSEST_SYNC)
+            player.seekTo(t)
+            player.setSeekParameters(androidx.media3.exoplayer.SeekParameters.DEFAULT)
+        }
     }
 
     /** Preview picture of where you're seeking to, while you're seeking. */

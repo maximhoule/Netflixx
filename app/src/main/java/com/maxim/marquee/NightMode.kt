@@ -109,28 +109,40 @@ class StereoDownmixProcessor : BaseAudioProcessor() {
         return if (x < 0) -y else y
     }
 
+    private var samples = ShortArray(0)
+    private var mixed = ShortArray(0)
+
     override fun queueInput(inputBuffer: ByteBuffer) {
         val ch = inputAudioFormat.channelCount
         val frames = inputBuffer.remaining() / (2 * ch)
         if (frames == 0) return
-        val out = replaceOutputBuffer(frames * 4)
-        val input = inputBuffer.order(ByteOrder.nativeOrder())
-        val f = FloatArray(ch)
+        // Read the whole buffer in one go and write it in one go (much cheaper than one sample
+        // at a time, which matters while the player catches up after a skip).
+        val n = frames * ch
+        if (samples.size < n) samples = ShortArray(n)
+        if (mixed.size < frames * 2) mixed = ShortArray(frames * 2)
+        inputBuffer.order(ByteOrder.nativeOrder()).asShortBuffer().get(samples, 0, n)
+        inputBuffer.position(inputBuffer.position() + n * 2)
+        val k = 1f / 32768f
         // Android / FFmpeg order: FL, FR, FC, LFE, BL, BR (, SL, SR).
+        var i = 0
+        var o = 0
         repeat(frames) {
-            for (c in 0 until ch) f[c] = input.short / 32768f
-            val centre = 0.707f * f[2]
-            val lfe = 0.3f * f[3]
-            var l = f[0] + centre + lfe + 0.6f * f[4]
-            var r = f[1] + centre + lfe + 0.6f * f[5]
+            val centre = 0.707f * samples[i + 2] * k
+            val lfe = 0.3f * samples[i + 3] * k
+            var l = samples[i] * k + centre + lfe + 0.6f * samples[i + 4] * k
+            var r = samples[i + 1] * k + centre + lfe + 0.6f * samples[i + 5] * k
             if (ch == 8) {
-                l += 0.6f * f[6]
-                r += 0.6f * f[7]
+                l += 0.6f * samples[i + 6] * k
+                r += 0.6f * samples[i + 7] * k
             }
-            out.putShort((soft(l) * 32767f).toInt().toShort())
-            out.putShort((soft(r) * 32767f).toInt().toShort())
+            mixed[o++] = (soft(l) * 32767f).toInt().toShort()
+            mixed[o++] = (soft(r) * 32767f).toInt().toShort()
+            i += ch
         }
-        while (input.hasRemaining()) input.get()
+        val out = replaceOutputBuffer(frames * 4)
+        out.order(ByteOrder.nativeOrder()).asShortBuffer().put(mixed, 0, frames * 2)
+        out.position(frames * 4)
         out.flip()
     }
 }

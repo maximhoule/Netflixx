@@ -117,6 +117,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (event.action == android.view.KeyEvent.ACTION_DOWN && !model.userNavigated) model.userNavigated = true
         // The remote's microphone / search button, when the TV passes it to the app.
         when (event.keyCode) {
             android.view.KeyEvent.KEYCODE_SEARCH, android.view.KeyEvent.KEYCODE_VOICE_ASSIST -> {

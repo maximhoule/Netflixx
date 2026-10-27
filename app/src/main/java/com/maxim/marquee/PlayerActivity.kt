@@ -244,7 +244,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(), typography = com.maxim.marquee.ui.AppTypography) {
                 androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
-                    PlayerScreen(this, ui, playerView)
+                    PlayerScreen(this@PlayerActivity, ui, playerView)
                     PerfOverlay(androidx.compose.ui.Modifier.align(androidx.compose.ui.Alignment.TopEnd))
                 }
             }

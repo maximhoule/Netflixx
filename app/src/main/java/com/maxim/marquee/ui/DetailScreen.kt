@@ -133,6 +133,18 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
     val accent by androidx.compose.runtime.produceState<Accent?>(Accent.cached(art), art) { value = Accent.of(ctx, art) }
     val shade by androidx.compose.animation.animateColorAsState(accent?.shade ?: C.Bg, tween(450), label = "shade")
     val panel by androidx.compose.animation.animateColorAsState(accent?.panel ?: Color(0xE6151515), tween(450), label = "panel")
+    // Watched / unwatched menu: for an episode (hold OK on it), or the show from the button.
+    var watchMenu by remember(s) { mutableStateOf<Pair<Video?, FocusRequester?>?>(null) }
+    var refocus by remember(s) { mutableStateOf<FocusRequester?>(null) }
+    LaunchedEffect(refocus) {
+        val fr = refocus ?: return@LaunchedEffect
+        repeat(3) {
+            withFrameNanos { }
+            if (runCatching { fr.requestFocus() }.isSuccess) return@repeat
+        }
+        refocus = null
+    }
+    androidx.compose.runtime.CompositionLocalProvider(LocalWatchMenu provides { ep, back -> watchMenu = ep to back }) {
     Box(Modifier.fillMaxSize().background(shade)) {
         Backdrop(meta.background ?: s.preview.backdropUrl, Modifier.fillMaxSize(), wide = true, dim = 0.4f, shade = shade)
         val extras = rememberExtras(meta)
@@ -172,6 +184,14 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
                 collection = collection, related = related, back = playFr, panelColor = panel,
             )
         }
+        watchMenu?.let { (ep, back) ->
+            WatchMenu(model, meta, ep, episodes) {
+                watchMenu = null
+                // Back to where you were (the episode, or the Play button).
+                refocus = back ?: playFr
+            }
+        }
+    }
     }
 }
 
@@ -253,6 +273,7 @@ private fun ActionsRow(
 ) {
     // The name of the focused round button, shown under the row.
     var caption by remember { mutableStateOf<String?>(null) }
+    val openWatchMenu = LocalWatchMenu.current
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
         val epText = target?.let { " ${it.label}" } ?: ""
         PillButton(
@@ -272,7 +293,7 @@ private fun ActionsRow(
                 add(Triple(if (inList) PlayerIcons.Check else Icons.Filled.Add, if (inList) "In My List" else "Add to My List") { model.toggleMyList(meta) })
             }
             if (meta.isSeries || meta.type == "movie") {
-                add(Triple(PlayerIcons.DoneAll, if (meta.isSeries) "Mark show watched" else "Mark watched") { model.markWatched(meta) })
+                add(Triple(PlayerIcons.DoneAll, "Watched / unwatched…") { openWatchMenu(target, null) })
             }
             add(Triple(Icons.AutoMirrored.Filled.List, "Choose source") { model.play(req, chooseSource = true) })
         }
@@ -371,6 +392,9 @@ private fun SmallTab(label: String, selected: Boolean, onClick: () -> Unit) {
 
 private val airDate = java.text.SimpleDateFormat("MMM d, yyyy", java.util.Locale.getDefault())
 
+/** Opens the watched / unwatched menu for an episode (null: for the whole show or film). */
+private val LocalWatchMenu = androidx.compose.runtime.staticCompositionLocalOf<(Video?, FocusRequester?) -> Unit> { { _, _ -> } }
+
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun ColumnScope.EpisodesPanel(
@@ -382,6 +406,7 @@ private fun ColumnScope.EpisodesPanel(
     tick: Int,
     entry: EntryPoint,
 ) {
+    val openWatchMenu = LocalWatchMenu.current
     var season by remember(meta.id, seasons) { mutableIntStateOf(target?.season ?: seasons.firstOrNull() ?: 1) }
     var picking by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
@@ -572,6 +597,11 @@ private fun ColumnScope.EpisodesPanel(
                     onDispose { firstShown = false }
                 }
             }
+            val rowFr = when {
+                isTarget -> targetFr
+                i == 0 -> firstFr
+                else -> remember(ep.id) { FocusRequester() }
+            }
             EpisodeRow(
                 ep = ep,
                 showSeason = q.isNotEmpty(),
@@ -585,12 +615,9 @@ private fun ColumnScope.EpisodesPanel(
                 progress = model.progressFor(meta.id, ep.id).also { tick },
                 watched = model.watched(meta.id, ep.id),
                 upNext = isTarget,
-                focusRequester = when {
-                    isTarget -> targetFr
-                    i == 0 -> firstFr
-                    else -> null
-                },
+                focusRequester = rowFr,
                 onClick = { model.play(model.reqFor(meta, ep)) },
+                onLongClick = { openWatchMenu(ep, rowFr) },
             )
         }
     }
@@ -630,6 +657,7 @@ private fun EpisodeRow(
     upNext: Boolean,
     focusRequester: FocusRequester?,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
 ) {
     Tile(
         modifier = Modifier.fillMaxWidth().height(96.dp),
@@ -637,6 +665,7 @@ private fun EpisodeRow(
         focusedScale = 1.02f,
         border = true,
         focusRequester = focusRequester,
+        onLongClick = onLongClick,
         onClick = onClick,
     ) { f ->
         Row(
@@ -723,6 +752,62 @@ private fun PosterGrid(model: AppModel, items: List<MetaItem>, entry: EntryPoint
                 focusRequester = if (i == 0) firstFr else null,
                 onClick = { model.openDetail(m) },
             )
+        }
+    }
+}
+
+/** Watched / unwatched choices for one episode and for the whole show (or a film). */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun WatchMenu(model: AppModel, meta: MetaItem, ep: Video?, episodes: List<Video>, close: () -> Unit) {
+    BackHandler { close() }
+    val firstFr = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        runCatching { firstFr.requestFocus() }
+    }
+    val options = buildList<Pair<String, () -> Unit>> {
+        if (ep != null && meta.isSeries) {
+            val seen = model.watched(meta.id, ep.id)
+            add((if (seen) "Mark ${ep.label} unwatched" else "Mark ${ep.label} watched") to { model.setEpisodesWatched(meta, listOf(ep), !seen) })
+            val upTo = episodes.filter { it.season > 0 }.let { l -> l.take(l.indexOfFirst { it.id == ep.id } + 1) }
+            if (upTo.size > 1) add("Mark everything up to ${ep.label} watched" to { model.setEpisodesWatched(meta, upTo, true) })
+            val season = episodes.filter { it.season == ep.season }
+            if (season.size > 1) {
+                add("Mark season ${ep.season} watched" to { model.setEpisodesWatched(meta, season, true) })
+                add("Mark season ${ep.season} unwatched" to { model.setEpisodesWatched(meta, season, false) })
+            }
+        }
+        val all = model.allWatched(meta)
+        val any = if (meta.isSeries) episodes.any { model.watched(meta.id, it.id) } else all
+        if (!all) add((if (meta.isSeries) "Mark whole show watched" else "Mark as watched") to { model.markWatched(meta) })
+        if (any) add((if (meta.isSeries) "Mark whole show unwatched" else "Mark as unwatched") to { model.markUnwatched(meta) })
+    }
+    Box(Modifier.fillMaxSize().background(Color(0xB3000000)), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier
+                .width(440.dp)
+                .focusProperties { exit = { FocusRequester.Cancel } }
+                .focusGroup()
+                .background(Color(0xFF181818), RoundedCornerShape(12.dp))
+                .padding(22.dp),
+        ) {
+            Text(meta.name, color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            ep?.let { Text("${it.label} · ${it.title}", color = C.Dim, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            Spacer(Modifier.height(16.dp))
+            options.forEachIndexed { i, (label, action) ->
+                Tile(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                    focusedScale = 1.02f, border = false,
+                    focusRequester = if (i == 0) firstFr else null,
+                    onClick = { close(); action() },
+                ) { f ->
+                    Text(
+                        label, color = if (f) Color.Black else Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.fillMaxWidth().background(if (f) Color.White else Color(0x1AFFFFFF)).padding(horizontal = 16.dp, vertical = 12.dp),
+                    )
+                }
+            }
         }
     }
 }

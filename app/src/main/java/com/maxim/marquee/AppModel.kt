@@ -905,7 +905,8 @@ class AppModel(private val activity: MainActivity) {
             }
         }
         val inLibrary = library.associateBy { it.id }
-        Store.allProgress().filterNot { com.maxim.marquee.data.Emby.isEmby(it.metaId) }.groupBy { it.metaId }.forEach { (metaId, list) ->
+        // Played from a show page that came from your Emby server: same show (by IMDb id) when it's known.
+        Store.allProgress().groupBy { com.maxim.marquee.data.Emby.sharedId(it.metaId) }.forEach { (metaId, list) ->
             val p = list.maxByOrNull { it.updated } ?: return@forEach
             val lib = inLibrary[metaId]
             val libTime = lib?.let { watchedAt(it) } ?: -1
@@ -957,7 +958,8 @@ class AppModel(private val activity: MainActivity) {
                     videoId = c.videoId,
                     progress = if (c.dur > 0 && c.pos > 1) (c.pos.toFloat() / c.dur).coerceIn(0.02f, 1f) else null,
                     badge = if (c.type == "series") {
-                        episodeLabel(c.videoId)?.let { if (c.pos == 1L) "NEXT · $it" else it } ?: c.badge
+                        (episodeLabel(c.videoId) ?: com.maxim.marquee.data.Emby.introKeys[c.videoId]?.let { episodeLabel(it) })
+                            ?.let { if (c.pos == 1L) "NEXT · $it" else it } ?: c.badge
                     } else null,
                 )
             }
@@ -1054,14 +1056,29 @@ class AppModel(private val activity: MainActivity) {
         }
     }
 
-    /** Marked as watched by hand, and not played again since. */
-    private fun markedDone(metaId: String, videoId: String): Boolean {
-        val mark = Store.markedWatched[metaId] ?: return false
-        return (Store.progress(videoId)?.updated ?: -1) < mark
+    /**
+     * What you set by hand for this episode (or the whole show): true = watched, false = unwatched,
+     * null = nothing, or you've played it since (then how far you got decides).
+     */
+    private fun manualState(metaId: String, videoId: String): Boolean? {
+        var best = -1L
+        var state: Boolean? = null
+        fun consider(t: Long?, v: Boolean) {
+            if (t != null && t > best) { best = t; state = v }
+        }
+        consider(Store.markedWatched[metaId], true)
+        consider(Store.markedUnwatched[metaId], false)
+        consider(Store.episodesWatched[videoId], true)
+        consider(Store.episodesUnwatched[videoId], false)
+        if (state == null) return null
+        return if ((Store.progress(videoId)?.updated ?: -1) > best) null else state
     }
 
+    /** Marked as watched by hand, and not played again since. */
+    private fun markedDone(metaId: String, videoId: String): Boolean = manualState(metaId, videoId) == true
+
     fun progressFor(metaId: String, videoId: String): Float? {
-        if (markedDone(metaId, videoId)) return null
+        if (manualState(metaId, videoId) != null) return null
         val (pos, dur) = positionOf(metaId, videoId) ?: return null
         if (dur <= 0 || pos < 5_000) return null
         val f = pos.toFloat() / dur
@@ -1069,7 +1086,7 @@ class AppModel(private val activity: MainActivity) {
     }
 
     fun watched(metaId: String, videoId: String): Boolean {
-        if (markedDone(metaId, videoId)) return true
+        manualState(metaId, videoId)?.let { return it }
         val (pos, dur) = positionOf(metaId, videoId) ?: return false
         return dur > 0 && pos >= dur * 0.95
     }
@@ -1151,6 +1168,59 @@ class AppModel(private val activity: MainActivity) {
         }
     }
 
+    /**
+     * Marks episodes watched or unwatched (just those, never the whole show). Continue Watching
+     * follows: a watched episode moves the show on to the next one.
+     */
+    fun setEpisodesWatched(meta: MetaItem, eps: List<Video>, watched: Boolean) {
+        if (eps.isEmpty()) return
+        val ids = eps.map { it.id }
+        Store.markEpisodes(ids, watched)
+        if (!watched) Store.forgetProgress(ids)
+        val req = PlayReq(meta.type, meta.id, ids.last(), meta.name, meta.poster, meta.background)
+        if (watched && meta.isSeries) {
+            // Up next moves on only if these are where you're at (or past it), not for an old episode.
+            val order = sortedEpisodes(meta).map { it.id }
+            val last = order.lastOrNull { it in ids }
+            val current = Store.allProgress().filter { it.metaId == meta.id }.maxByOrNull { it.updated }?.videoId
+            if (last != null && (current == null || order.indexOf(last) >= order.indexOf(current))) {
+                nextVideo(meta, last)?.takeIf { !watched(meta.id, it.id) }?.let { markUpNext(req, it) }
+            }
+        }
+        refreshContinue()
+        toast(
+            when {
+                eps.size == 1 -> "${eps[0].label} marked ${if (watched) "watched" else "unwatched"}"
+                else -> "${eps.size} episodes marked ${if (watched) "watched" else "unwatched"}"
+            },
+        )
+        scope.launch {
+            eps.take(30).forEach { ep -> safeRun { com.maxim.marquee.data.Emby.setPlayed(meta.type, meta.id, ep.id, watched) } }
+        }
+    }
+
+    /** The whole show (or movie) back to unwatched: progress cleared everywhere. */
+    fun markUnwatched(meta: MetaItem) {
+        val id = meta.id
+        Store.markUnwatched(id)
+        Store.dismiss(id)
+        library = library.map { if (it.id == id) it.copy(timeOffset = 0) else it }
+        refreshContinue()
+        toast(if (meta.isSeries) "Marked the whole show as unwatched" else "Marked as unwatched")
+        scope.launch {
+            Repo.markUnwatched(id)
+            safeRun { com.maxim.marquee.data.Emby.setPlayed(meta.type, id, null, false) }
+        }
+    }
+
+    /** True when every aired episode (or the movie) counts as watched. */
+    fun allWatched(meta: MetaItem): Boolean {
+        if (!meta.isSeries) return watched(meta.id, meta.defaultVideoId ?: meta.id)
+        val now = System.currentTimeMillis()
+        val eps = meta.videos.filter { it.season > 0 && (it.released == 0L || it.released < now) }
+        return eps.isNotEmpty() && eps.all { watched(meta.id, it.id) }
+    }
+
     /** From a Continue Watching card: the episode after this one. */
     fun playNextOf(item: CardItem) {
         val vid = item.videoId ?: return
@@ -1167,6 +1237,7 @@ class AppModel(private val activity: MainActivity) {
         scope.launch {
             val meta = Repo.meta(item.meta.type, item.meta.id) ?: item.meta
             val req = PlayReq(item.meta.type, item.meta.id, vid, meta.name, meta.poster ?: item.meta.poster, meta.background)
+            Store.markEpisodes(listOf(vid), true)
             Store.saveProgress(LocalProgress(req.metaId, req.type, req.name, req.poster, vid, 1, 1, System.currentTimeMillis() - 1))
             val next = if (meta.type == "series") nextVideo(meta, vid) else null
             next?.let { markUpNext(req, it) }

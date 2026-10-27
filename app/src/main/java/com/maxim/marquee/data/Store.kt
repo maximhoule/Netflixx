@@ -255,9 +255,11 @@ object Store {
         }
     }
 
-    private fun putTime(key: String, id: String, t: Long) = synchronized(timeMaps) {
-        // Keep the newest 300 so the list can't grow forever.
-        val m = (timeMap(key) + (id to t)).entries.sortedByDescending { it.value }.take(300).associate { it.key to it.value }
+    private fun putTime(key: String, id: String, t: Long, cap: Int = 300) = putTimes(key, listOf(id), t, cap)
+
+    private fun putTimes(key: String, ids: List<String>, t: Long, cap: Int = 300) = synchronized(timeMaps) {
+        // Keep the newest [cap] so the list can't grow forever.
+        val m = (timeMap(key) + ids.map { it to t }).entries.sortedByDescending { it.value }.take(cap).associate { it.key to it.value }
         timeMaps["$activeProfileId/$key"] = m
         setString(key, org.json.JSONObject().apply { m.forEach { put(it.key, it.value) } }.toString())
     }
@@ -269,6 +271,16 @@ object Store {
     /** Shows/movies you marked as watched, and when: every episode counts as watched unless played again after. */
     val markedWatched: Map<String, Long> get() = timeMap("markedWatched")
     fun markWatched(metaId: String) = putTime("markedWatched", metaId, System.currentTimeMillis())
+
+    /** Shows/movies you marked as unwatched, and when: earlier watched states don't count any more. */
+    val markedUnwatched: Map<String, Long> get() = timeMap("markedUnwatched")
+    fun markUnwatched(metaId: String) = putTime("markedUnwatched", metaId, System.currentTimeMillis())
+
+    /** Single episodes marked watched / unwatched by hand, and when. */
+    val episodesWatched: Map<String, Long> get() = timeMap("episodesWatched")
+    val episodesUnwatched: Map<String, Long> get() = timeMap("episodesUnwatched")
+    fun markEpisodes(videoIds: List<String>, watched: Boolean) =
+        putTimes(if (watched) "episodesWatched" else "episodesUnwatched", videoIds, System.currentTimeMillis(), cap = 2000)
 
     /** Emby "New in …" rows: 0 off (default), 1 on the Series and Movies tabs, 2 everywhere. */
     var embyRows: Int
@@ -430,6 +442,13 @@ object Store {
     }
 
     /** Forget local progress for a title (used by "Remove from Continue Watching"). */
+    /** Forget local progress for some episodes (marked unwatched). */
+    fun forgetProgress(videoIds: Collection<String>) = synchronized(lock) {
+        val map = loaded()
+        videoIds.forEach { map.remove(it) }
+        persist(map)
+    }
+
     fun dismiss(metaId: String) = synchronized(lock) {
         val map = loaded()
         map.values.filter { it.metaId == metaId }.map { it.videoId }.forEach { map.remove(it) }

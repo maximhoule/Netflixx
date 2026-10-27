@@ -35,7 +35,7 @@ object Emby {
 
     // ---------------------------------------------------------------- HTTP
 
-    private suspend fun request(path: String, body: JSONObject? = null, base: String = server): String? =
+    private suspend fun request(path: String, body: JSONObject? = null, base: String = server, delete: Boolean = false): String? =
         withContext(Dispatchers.IO) {
             safe {
                 val b = Request.Builder()
@@ -43,7 +43,8 @@ object Emby {
                     .header("X-Emby-Authorization", authHeader())
                     .header("Accept", "application/json")
                 if (token.isNotEmpty()) b.header("X-Emby-Token", token)
-                if (body != null) b.post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
+                if (delete) b.delete()
+                else if (body != null) b.post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
                 Http.client.newCall(b.build()).execute().use { r -> if (r.isSuccessful) (r.body?.string() ?: "") else null }
             }
         }
@@ -386,6 +387,9 @@ object Emby {
     /** True when this Stremio title (tt…) is also on your Emby server. */
     fun hasTitle(imdbId: String): Boolean = synchronized(imdbToEmby) { imdbToEmby.containsKey(imdbId.substringBefore(':')) }
 
+    /** An Emby title's IMDb id when known (so it's the same title as from your addons), else its own id. */
+    fun sharedId(metaId: String): String = if (isEmby(metaId)) imdbForEmby(rawId(metaId)) ?: metaId else metaId
+
     private fun imdbForEmby(embyId: String?): String? = embyId?.let { synchronized(imdbToEmby) { embyToImdb[it] } }
 
     /** The server's item id for an app id ("emby:123", or a merged "tt…" one), if it's on your server. */
@@ -397,6 +401,16 @@ object Emby {
         if (!connected) return false
         val id = serverIdFor(metaId) ?: return false
         return request("/Users/$userId/PlayedItems/$id", JSONObject()) != null
+    }
+
+    /** Watched / unwatched on your server: a whole show or movie ([metaId]), or one episode ([videoId]). */
+    suspend fun setPlayed(type: String, metaId: String, videoId: String?, played: Boolean): Boolean {
+        if (!connected) return false
+        val id = if (videoId == null || videoId == metaId) serverIdFor(metaId) else {
+            if (isEmby(videoId)) rawId(videoId)
+            else streamsForTitle(type, videoId).firstOrNull()?.embyId?.let { rawId(it) }
+        } ?: return false
+        return request("/Users/$userId/PlayedItems/$id", if (played) JSONObject() else null, delete = !played) != null
     }
 
     /** Re-labels an Emby title with its IMDb id so it merges with the same title from Stremio. */

@@ -411,6 +411,20 @@ object Repo {
         }
     }
 
+    /** Marked unwatched: no watched flag, no resume point. */
+    suspend fun markUnwatched(metaId: String) {
+        val key = Store.authKey ?: return
+        safe {
+            val item = StremioApi.libraryItem(key, metaId) ?: return
+            val state = item.obj("state") ?: return
+            state.put("timeOffset", 0L)
+            state.put("flaggedWatched", 0)
+            state.put("timesWatched", 0)
+            item.put("_mtime", isoNow())
+            StremioApi.putLibraryItem(key, item)
+        }
+    }
+
     /** Add to / remove from My List (the Stremio library), exactly like Stremio does it. */
     suspend fun setInLibrary(meta: MetaItem, add: Boolean): Boolean {
         val key = Store.authKey ?: return false

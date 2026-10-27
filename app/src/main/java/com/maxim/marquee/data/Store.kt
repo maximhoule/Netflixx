@@ -166,6 +166,36 @@ object Store {
         get() = bool("externalPlayer", false)
         set(v) = setBool("externalPlayer", v)
 
+    /** Episodes the "new episode" banner has already told you about. */
+    fun remindedEpisodes(): Set<String> = global.getStringSet("reminded", emptySet()) ?: emptySet()
+
+    fun addRemindedEpisodes(ids: List<String>) {
+        val all = (remindedEpisodes() + ids).toList().takeLast(300).toSet()
+        global.edit().putStringSet("reminded", all).apply()
+    }
+
+    /** Your connection speed as last measured while playing (kbit/s), 0 if unknown. */
+    var bandwidthKbps: Long
+        get() = global.getLong("bandwidthKbps", 0)
+        set(v) = global.edit().putLong("bandwidthKbps", v).apply()
+
+    /** Releases that failed or kept buffering here, with when (they're tried last for two weeks). */
+    fun badSources(): Map<String, Long> = safe {
+        val o = org.json.JSONObject(global.getString("badSources", null) ?: "{}")
+        val cutoff = System.currentTimeMillis() - 14L * 24 * 3_600_000
+        o.keys().asSequence().mapNotNull { k -> o.optLong(k).takeIf { it > cutoff }?.let { k to it } }.toMap()
+    } ?: emptyMap()
+
+    fun markSourceBad(key: String) {
+        if (key.isBlank()) return
+        val m = badSources().toMutableMap()
+        m[key] = System.currentTimeMillis()
+        val keep = m.entries.sortedByDescending { it.value }.take(200)
+        val o = org.json.JSONObject()
+        keep.forEach { o.put(it.key, it.value) }
+        global.edit().putString("badSources", o.toString()).apply()
+    }
+
     /** 0 = best available, otherwise the highest vertical resolution to auto-pick (2160/1080/720). */
     var maxQuality: Int
         get() = prefs.getInt("maxQuality", 0)

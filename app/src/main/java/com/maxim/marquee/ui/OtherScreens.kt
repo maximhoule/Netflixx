@@ -228,16 +228,35 @@ fun CardMenuOverlay(model: AppModel) {
         ) {
             Text(meta.name, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             m.item.badge?.let { Text(it, color = C.Dim, fontSize = 14.sp) }
+            m.item.progress?.takeIf { m.fromContinue && it < 1f }?.let {
+                Spacer(Modifier.height(8.dp))
+                ProgressLine(it, Modifier.fillMaxWidth())
+            }
             Spacer(Modifier.height(18.dp))
             val options = mutableListOf<Pair<String, () -> Unit>>()
-            options += "Details" to { model.closeCardMenu(); model.openDetail(meta) }
-            if (m.item.videoId != null) options += "Resume" to { model.closeCardMenu(); model.resume(m.item) }
+            val series = meta.type == "series"
+            val ep = m.item.badge?.substringAfter("· ")?.takeIf { series && it.startsWith("S") }
+            if (m.fromContinue && m.item.videoId != null) {
+                // Continue Watching: everything about carrying on, right here.
+                val started = (m.item.progress ?: 0f) > 0.02f
+                options += ((if (started) "Resume" else "Play") + (ep?.let { " $it" } ?: "")) to { model.closeCardMenu(); model.resume(m.item) }
+                if (started) options += "Start over" to { model.closeCardMenu(); model.resume(m.item, startOver = true) }
+                if (series) options += "Next episode" to { model.closeCardMenu(); model.playNextOf(m.item) }
+                options += (if (series) "Episodes & details" else "Details") to { model.closeCardMenu(); model.openDetail(meta) }
+                options += "Choose a source" to { model.closeCardMenu(); model.resume(m.item, chooseSource = true) }
+                options += (if (series) "Mark this episode watched" else "Mark as watched") to {
+                    model.closeCardMenu(); model.markEpisodeWatched(m.item)
+                }
+            } else {
+                options += "Details" to { model.closeCardMenu(); model.openDetail(meta) }
+                if (m.item.videoId != null) options += "Resume" to { model.closeCardMenu(); model.resume(m.item) }
+            }
             if (!com.maxim.marquee.data.Emby.isEmby(meta.id)) {
                 options += (if (model.inMyList(meta.id)) "Remove from My List" else "Add to My List") to {
                     model.toggleMyList(meta); model.closeCardMenu()
                 }
             }
-            if (meta.type == "series" || meta.type == "movie") {
+            if (meta.type == "series" || (meta.type == "movie" && !m.fromContinue)) {
                 options += (if (meta.type == "series") "Mark show as watched" else "Mark as watched") to {
                     model.markWatched(meta); model.closeCardMenu()
                 }

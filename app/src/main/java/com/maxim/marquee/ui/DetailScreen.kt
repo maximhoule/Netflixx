@@ -1,6 +1,7 @@
 package com.maxim.marquee.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
@@ -126,8 +127,14 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
         runCatching { playFr.requestFocus() }
     }
 
-    Box(Modifier.fillMaxSize().background(C.Bg)) {
-        Backdrop(meta.background ?: s.preview.backdropUrl, Modifier.fillMaxSize(), wide = true, dim = 0.4f)
+    // The page takes a deep tint of the artwork's main colour (black until it's worked out).
+    val art = meta.background ?: s.preview.backdropUrl ?: meta.poster
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val accent by androidx.compose.runtime.produceState<Accent?>(Accent.cached(art), art) { value = Accent.of(ctx, art) }
+    val shade by androidx.compose.animation.animateColorAsState(accent?.shade ?: C.Bg, tween(450), label = "shade")
+    val panel by androidx.compose.animation.animateColorAsState(accent?.panel ?: Color(0xE6151515), tween(450), label = "panel")
+    Box(Modifier.fillMaxSize().background(shade)) {
+        Backdrop(meta.background ?: s.preview.backdropUrl, Modifier.fillMaxSize(), wide = true, dim = 0.4f, shade = shade)
         val extras = rememberExtras(meta)
         Column(
             Modifier.fillMaxHeight().width(if (shownSide != null) 540.dp else 720.dp)
@@ -162,7 +169,7 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
             SidePanel(
                 model = model, meta = meta, sides = sides, side = shownSide, onSide = { side = it },
                 episodes = episodes, seasons = seasons, target = target, tick = tick,
-                collection = collection, related = related, back = playFr,
+                collection = collection, related = related, back = playFr, panelColor = panel,
             )
         }
     }
@@ -296,6 +303,7 @@ private fun BoxScope.SidePanel(
     collection: com.maxim.marquee.data.Tmdb.Collection?,
     related: List<MetaItem>,
     back: FocusRequester,
+    panelColor: Color,
 ) {
     val entry = remember { EntryPoint() }
     Column(
@@ -304,7 +312,7 @@ private fun BoxScope.SidePanel(
             .padding(top = 30.dp, end = 26.dp, bottom = 22.dp)
             .width(392.dp)
             .fillMaxHeight()
-            .background(Color(0xE6151515), RoundedCornerShape(18.dp))
+            .background(panelColor, RoundedCornerShape(18.dp))
             .border(1.dp, Color(0x24FFFFFF), RoundedCornerShape(18.dp))
             .padding(horizontal = 12.dp, vertical = 12.dp)
             // In from the buttons: the episode you're up to (else the list's first item).

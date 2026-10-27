@@ -446,7 +446,7 @@ fun ActionButton(
 
 /** Full-bleed artwork that fades into black on the left and bottom. */
 @Composable
-fun Backdrop(url: String?, modifier: Modifier = Modifier, wide: Boolean = false, dim: Float = 0f, video: (@Composable () -> Unit)? = null) {
+fun Backdrop(url: String?, modifier: Modifier = Modifier, wide: Boolean = false, dim: Float = 0f, shade: Color = C.Bg, video: (@Composable () -> Unit)? = null) {
     // Keep showing the current picture until the next one is decoded, then crossfade:
     // no flash of black between titles.
     val ctx = androidx.compose.ui.platform.LocalContext.current
@@ -479,13 +479,13 @@ fun Backdrop(url: String?, modifier: Modifier = Modifier, wide: Boolean = false,
                     val w = size.width
                     val h = size.height
                     val left = Brush.horizontalGradient(
-                        0f to C.Bg.copy(alpha = 0.88f), 0.54f to C.Bg.copy(alpha = 0.55f), 1f to Color.Transparent,
+                        0f to shade.copy(alpha = 0.88f), 0.54f to shade.copy(alpha = 0.55f), 1f to Color.Transparent,
                         startX = 0f, endX = w * 0.7f,
                     )
-                    val top = Brush.verticalGradient(0f to C.Bg.copy(alpha = 0.55f), 1f to Color.Transparent, startY = 0f, endY = h * 0.16f)
-                    val bottom = Brush.verticalGradient(0f to Color.Transparent, 1f to C.Bg, startY = h * 0.6f, endY = h)
+                    val top = Brush.verticalGradient(0f to shade.copy(alpha = 0.55f), 1f to Color.Transparent, startY = 0f, endY = h * 0.16f)
+                    val bottom = Brush.verticalGradient(0f to Color.Transparent, 1f to shade, startY = h * 0.6f, endY = h)
                     onDrawBehind {
-                        if (dim > 0f) drawRect(C.Bg.copy(alpha = dim))
+                        if (dim > 0f) drawRect(shade.copy(alpha = dim))
                         drawRect(left, size = androidx.compose.ui.geometry.Size(w * 0.7f, h))
                         drawRect(top, size = androidx.compose.ui.geometry.Size(w, h * 0.16f))
                         drawRect(bottom, topLeft = Offset(0f, h * 0.6f), size = androidx.compose.ui.geometry.Size(w, h * 0.4f))

@@ -433,13 +433,13 @@ fun CatalogRow(
     val expandCards = Store.expandCards
 
     Column(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
-        Text(
-            row.title,
-            color = Color.White,
-            fontSize = 19.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(start = 14.dp, top = 4.dp),
-        )
+        Row(Modifier.padding(start = 14.dp, top = 4.dp), verticalAlignment = Alignment.Bottom) {
+            Text(row.title, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+            if (row.source is RowSource.Continue && !items.isNullOrEmpty()) {
+                Spacer(Modifier.width(12.dp))
+                Text("Hold OK for more options", color = Color(0xFF8A8A8A), fontSize = 12.sp, modifier = Modifier.padding(bottom = 2.dp))
+            }
+        }
         if (items.isNullOrEmpty()) {
             SkeletonRow(rowShape)
         } else {

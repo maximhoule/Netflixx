@@ -20,6 +20,7 @@ class App : Application(), ImageLoaderFactory {
         CrashGuard.install(this)
         Store.init(this)
         PerfMonitor.init()
+        WarmWorker.schedule(this)
         com.maxim.marquee.data.Http.init(cacheDir)
         // Read saved progress and profiles before the first screen needs them.
         AppScope.launch { Store.warmUp() }

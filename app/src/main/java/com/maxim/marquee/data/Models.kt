@@ -205,7 +205,7 @@ data class SubTrack(val url: String, val lang: String, val label: String) {
 }
 
 /** What a source's name/description says about it: resolution, HDR, audio, size. */
-data class Quality(val res: Int, val dv: Boolean, val hdr: String?, val badges: List<String>, val av1: Boolean = false) {
+data class Quality(val res: Int, val dv: Boolean, val hdr: String?, val badges: List<String>, val av1: Boolean = false, val sizeMb: Double? = null) {
     /** Dolby Vision without an HDR10 fallback layer: shows wrong colours on TVs without DV. */
     val dvOnly get() = dv && hdr == null
 
@@ -253,8 +253,13 @@ data class Quality(val res: Int, val dv: Boolean, val hdr: String?, val badges: 
             if (has("remux")) badges += "REMUX"
             val av1 = has("av1")
             if (av1) badges += "AV1"
-            SIZE.find(text)?.let { badges += it.groupValues[1].replace(',', '.') + " " + it.groupValues[2].uppercase().replace("I", "") }
-            return Quality(res, dv, hdr, badges, av1)
+            val size = SIZE.find(text)
+            size?.let { badges += it.groupValues[1].replace(',', '.') + " " + it.groupValues[2].uppercase().replace("I", "") }
+            val mb = size?.let { m ->
+                val v = m.groupValues[1].replace(',', '.').toDoubleOrNull() ?: return@let null
+                if (m.groupValues[2].uppercase().startsWith("G")) v * 1024 else v
+            }
+            return Quality(res, dv, hdr, badges, av1, mb)
         }
     }
 }
@@ -273,6 +278,11 @@ data class StreamItem(
     val span: IntRange? = null,
 ) {
     val quality: Quality by lazy { Quality.parse("$name $title") }
+
+    /** The release this is (its file name), to remember which ones played badly. */
+    val sourceKey: String by lazy {
+        (fileName ?: title.lineSequence().firstOrNull() ?: name).lowercase().replace(Regex("\\s+"), " ").trim().take(140)
+    }
 
     /**
      * Episodes in this file: from the server, or read from the name ("S04E03-E04", "S04E03E04",

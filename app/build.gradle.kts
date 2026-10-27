@@ -101,5 +101,6 @@ dependencies {
     implementation("com.github.teamnewpipe:NewPipeExtractor:v0.26.5")
     implementation("com.github.TeamNewPipe:nanojson:e9d656ddb49a412a5a0a5d5ef20ca7ef09549996")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.4")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
     testImplementation("junit:junit:4.13.2")
 }

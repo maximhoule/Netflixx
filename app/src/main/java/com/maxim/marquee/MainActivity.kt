@@ -6,6 +6,8 @@ import android.view.Display
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -85,6 +87,13 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { model.av1Hardware = av1 }
         }.start()
         setContent { AppRoot(model) { finish() } }
+        // Once a minute: if the app has sat idle a while, quietly freshen the rows.
+        lifecycleScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(60_000)
+                if (isForeground) runCatching { model.idleTick() }
+            }
+        }
         // "Who's watching?" when the app opens and there's more than one profile.
         if (!profileChosen && com.maxim.marquee.data.Store.profiles.size > 1) {
             model.profileGate = ProfileGate.PICK
@@ -117,7 +126,10 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
-        if (event.action == android.view.KeyEvent.ACTION_DOWN && !model.userNavigated) model.userNavigated = true
+        if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+            if (!model.userNavigated) model.userNavigated = true
+            model.lastInputAt = System.currentTimeMillis()
+        }
         // The remote's microphone / search button, when the TV passes it to the app.
         when (event.keyCode) {
             android.view.KeyEvent.KEYCODE_SEARCH, android.view.KeyEvent.KEYCODE_VOICE_ASSIST -> {
@@ -265,6 +277,7 @@ fun AppRoot(model: AppModel, exit: () -> Unit) {
                 BackHandler { model.cancelLoading() }
             }
             model.updateStatus?.let { UpdateBanner(it, model.updateProgress) }
+            model.reminder?.let { com.maxim.marquee.ui.ReminderBanner(it, Modifier.align(Alignment.BottomEnd)) }
             PerfOverlay(Modifier.align(Alignment.TopEnd))
         }
     }

@@ -396,6 +396,8 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             .setLoadErrorHandlingPolicy(androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(6))
 
         val p = ExoPlayer.Builder(this, renderers)
+            // Shared meter: its reading of your connection speed is kept for picking sources.
+            .setBandwidthMeter(androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.getSingletonInstance(this))
             .setTrackSelector(trackSelector)
             .setLoadControl(loadControl)
             .setMediaSourceFactory(sources)
@@ -451,6 +453,8 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
     private val listener = object : Player.Listener {
         override fun onPlaybackStateChanged(state: Int) {
             ui.buffering = state == Player.STATE_BUFFERING || (state == Player.STATE_IDLE && !started)
+            // Stalls mid-playback (not the ones right after a skip you made).
+            if (state == Player.STATE_BUFFERING && started && System.currentTimeMillis() - lastSeekAt > 3_000) stalls++
             if (state == Player.STATE_READY) {
                 // Part 1 of a split story, but the file is long enough to hold every part:
                 // up next is whatever comes after the whole story.
@@ -465,6 +469,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
                     val d = player.duration
                     if (d > 0 && d != C.TIME_UNSET) {
                         partSeek = null
+                        lastSeekAt = System.currentTimeMillis()
                         player.seekTo((d * f).toLong())
                     }
                 }
@@ -689,6 +694,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             val active = hit?.let { (label, s) -> Triple(label, s.startMs, s.endMs) }
             // Only trusted timings skip by themselves; unsure ones just offer the button.
             if (active != null && Store.autoSkipIntro && hit.second.sure && autoSkipped.add(active.second)) {
+                lastSeekAt = System.currentTimeMillis()
                 player.seekTo(active.third)
                 flash(active.first.replace("Skip", "Skipped"))
                 ui.skip = null
@@ -875,6 +881,8 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
 
     /** Where a burst of skip presses is heading; the player jumps there once you pause pressing. */
     private var seekTarget: Long? = null
+    private var stalls = 0
+    private var lastSeekAt = 0L
     private var seekJob: kotlinx.coroutines.Job? = null
 
     override fun seekBy(ms: Long) {
@@ -900,6 +908,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             delay(350)
             val t = seekTarget ?: return@launch
             seekTarget = null
+            lastSeekAt = System.currentTimeMillis()
             player.setSeekParameters(androidx.media3.exoplayer.SeekParameters.CLOSEST_SYNC)
             player.seekTo(t)
             player.setSeekParameters(androidx.media3.exoplayer.SeekParameters.DEFAULT)
@@ -920,6 +929,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
     override fun skip() {
         val s = ui.skip ?: return
         listOfNotNull(segments?.intro, segments?.recap).firstOrNull { it.endMs == s.second }?.let { handled += it.startMs }
+        lastSeekAt = System.currentTimeMillis()
         player.seekTo(s.second)
         ui.skip = null
     }
@@ -1195,8 +1205,23 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         AppScope.launch { runCatching { com.maxim.marquee.data.Trakt.scrobble(action, t, v, pct) } }
     }
 
+    /** Remembers how this source played: your connection speed, and whether it kept stalling. */
+    private fun rememberHowItPlayed() {
+        runCatching {
+            val bps = androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.getSingletonInstance(this).bitrateEstimate
+            if (bps > 0) {
+                val kbps = bps / 1000
+                val old = Store.bandwidthKbps
+                Store.bandwidthKbps = if (old <= 0) kbps else (old * 2 + kbps) / 3
+            }
+            val watchedMs = if (::player.isInitialized) player.currentPosition else 0L
+            if (stalls >= 3 && watchedMs > 60_000) intent.getStringExtra("sourceKey")?.let { Store.markSourceBad(it) }
+        }
+    }
+
     override fun finish() {
         if (!finishing) {
+            rememberHowItPlayed()
             if (started && ::player.isInitialized) scrobble("stop")
             finishing = true
             if (started) saveProgress(sync = true, stopped = true)

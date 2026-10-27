@@ -455,6 +455,10 @@ class AppModel(private val activity: MainActivity) {
         Repo.library()?.let { library = it }
         refreshContinue()
         scope.launch { loadNewEpisodes() }
+        if (!remindersChecked) {
+            remindersChecked = true
+            scope.launch { checkReminders() }
+        }
         if (com.maxim.marquee.data.Emby.connected) {
             com.maxim.marquee.data.Emby.buildIndex()
             embyEntries = com.maxim.marquee.data.Emby.resume() + com.maxim.marquee.data.Emby.nextUp()
@@ -463,6 +467,82 @@ class AppModel(private val activity: MainActivity) {
             embyEntries = emptyList()
             refreshContinue()
         }
+    }
+
+    // ---------------- watchlist reminders ----------------
+
+    /** "New episode" banner on opening the app: episodes out today or yesterday you haven't seen. */
+    data class Reminder(val lines: List<String>, val more: Int)
+    var reminder by mutableStateOf<Reminder?>(null)
+    private var remindersChecked = false
+
+    private suspend fun checkReminders() {
+        delay(6_000) // let Home settle first
+        loadCalendar()
+        var waited = 0
+        while (calendar == null && waited < 90) { delay(1_000); waited++ }
+        val days = calendar ?: return
+        val today = calendarToday()
+        val shown = Store.remindedEpisodes()
+        val fresh = days.filter { it.day == today || it.day == today - 1 }
+            .flatMap { d -> d.entries.map { d.day to it } }
+            .filter { (_, e) -> !e.watched && e.ep.id !in shown }
+        if (fresh.isEmpty()) return
+        Store.addRemindedEpisodes(fresh.map { it.second.ep.id })
+        val lines = fresh.take(3).map { (day, e) ->
+            "${e.meta.name} · ${e.ep.label} ${e.ep.title}" + if (day == today) "" else " (yesterday)"
+        }
+        reminder = Reminder(lines, fresh.size - lines.size)
+        delay(12_000)
+        reminder = null
+    }
+
+    // ---------------- background refresh ----------------
+
+    /** When you last pressed a button (for refreshing quietly while the app sits idle). */
+    var lastInputAt = System.currentTimeMillis()
+    private var lastQuietRefresh = System.currentTimeMillis()
+
+    /** Runs every minute while the app is open: after 10 idle minutes, freshens everything (at most twice an hour). */
+    fun idleTick() {
+        val now = System.currentTimeMillis()
+        if (now - lastInputAt < 10 * 60_000L || now - lastQuietRefresh < 30 * 60_000L || stack.isNotEmpty() || loading != null) return
+        lastQuietRefresh = now
+        scope.launch { refreshQuietly() }
+    }
+
+    /** New catalog contents, Continue Watching, new episodes and the calendar, without touching where you are. */
+    private suspend fun refreshQuietly() {
+        safeRun { loadLibrary() }
+        safeRun { loadNewEpisodes(force = true) }
+        if (calendar != null) loadCalendar(force = true)
+        val gate = kotlinx.coroutines.sync.Semaphore(3)
+        browse.values.forEach { b ->
+            b.rows.filter { it.source is RowSource.Cat && b.loaded[it.key] == true }.map { row ->
+                scope.async {
+                    gate.acquire()
+                    try {
+                        val src = row.source as RowSource.Cat
+                        val parts = listOf(src.addon to src.catalog) + src.more
+                        val fresh = parts.map { (a, c) -> safeRun { Repo.catalog(a, c) } ?: emptyList() }.flatten().distinctBy { it.id }
+                        val browsingRow = b.lastFocusKey?.startsWith(row.key + "#") == true
+                        if (fresh.isNotEmpty() && !browsingRow && fresh.map { it.id } != b.rowItems[row.key]?.map { it.meta.id }) {
+                            b.rowItems[row.key] = fresh.map { CardItem(it) }
+                        }
+                    } finally {
+                        gate.release()
+                    }
+                }
+            }.awaitAll()
+        }
+    }
+
+    private suspend fun <T> safeRun(block: suspend () -> T): T? = try {
+        block()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
     }
 
     // ---------------- browse rows ----------------
@@ -1051,7 +1131,7 @@ class AppModel(private val activity: MainActivity) {
     // ---------------- playback ----------------
 
     /** Continue Watching tile: jump straight back in. */
-    fun resume(item: CardItem) {
+    fun resume(item: CardItem, startOver: Boolean = false, chooseSource: Boolean = false) {
         val vid = item.videoId
         if (vid == null || (item.meta.type == "series" && vid == item.meta.id)) {
             openDetail(item.meta); return
@@ -1064,8 +1144,35 @@ class AppModel(private val activity: MainActivity) {
                     type = item.meta.type, metaId = item.meta.id, videoId = vid, name = meta.name,
                     poster = meta.poster ?: item.meta.poster, background = meta.background,
                     episode = video?.let { "${it.label}  ${it.title}" } ?: episodeLabel(vid),
+                    startOver = startOver,
                 ),
+                chooseSource = chooseSource,
             )
+        }
+    }
+
+    /** From a Continue Watching card: the episode after this one. */
+    fun playNextOf(item: CardItem) {
+        val vid = item.videoId ?: return
+        scope.launch {
+            val meta = Repo.meta(item.meta.type, item.meta.id) ?: return@launch
+            val next = nextVideo(meta, vid) ?: run { toast("That was the last episode"); return@launch }
+            play(reqFor(meta, next))
+        }
+    }
+
+    /** "I've seen this one": the episode counts as watched and the card moves on to the next. */
+    fun markEpisodeWatched(item: CardItem) {
+        val vid = item.videoId ?: return
+        scope.launch {
+            val meta = Repo.meta(item.meta.type, item.meta.id) ?: item.meta
+            val req = PlayReq(item.meta.type, item.meta.id, vid, meta.name, meta.poster ?: item.meta.poster, meta.background)
+            Store.saveProgress(LocalProgress(req.metaId, req.type, req.name, req.poster, vid, 1, 1, System.currentTimeMillis() - 1))
+            val next = if (meta.type == "series") nextVideo(meta, vid) else null
+            next?.let { markUpNext(req, it) }
+            refreshContinue()
+            toast(if (next != null) "Marked watched · up next ${next.label}" else "Marked as watched")
+            if (Store.syncProgress) Repo.syncProgress(req.type, req.metaId, vid, 1, 1, true, next?.id, req.name, req.poster)
         }
     }
 
@@ -1079,10 +1186,12 @@ class AppModel(private val activity: MainActivity) {
             streams.partition { !com.maxim.marquee.data.Episodes.mismatch(it, meta.videos, video) }
         } else streams to emptyList()
         if (wrong.isNotEmpty()) android.util.Log.i("Marquee", "${wrong.size} sources skipped: wrong episode for ${req?.videoId}")
-        return rankQuality(right) + rankQuality(wrong)
+        val runtimeMin = (runtimeMs((meta ?: req?.let { Repo.cachedMeta(it.type, it.metaId) })?.runtime) / 60_000)
+            .takeIf { it > 0 } ?: if (req?.type == "movie") 110L else 45L
+        return rankQuality(right, runtimeMin) + rankQuality(wrong, runtimeMin)
     }
 
-    private fun rankQuality(streams: List<StreamItem>): List<StreamItem> {
+    private fun rankQuality(streams: List<StreamItem>, runtimeMin: Long = 60): List<StreamItem> {
         // "Best available" still never auto-picks above what the TV can show.
         val cap = if (Store.maxQuality > 0) Store.maxQuality else displayMaxHeight
         fun ok(s: StreamItem): Boolean {
@@ -1093,9 +1202,25 @@ class AppModel(private val activity: MainActivity) {
             return true
         }
         val (good, rest) = streams.partition { ok(it) }
+        // Smarter picking: a release that failed or kept buffering here recently, or one whose
+        // bitrate is more than your connection carries (measured while playing), goes after the
+        // ones that will play smoothly. Your server's copies are on your own network: no limit.
+        val bad = Store.badSources()
+        val kbps = Store.bandwidthKbps
+        fun smooth(s: StreamItem): Boolean {
+            if (s.sourceKey in bad) return false
+            if (s.embyId != null || kbps <= 0) return true
+            val mb = s.quality.sizeMb ?: return true
+            val needKbps = mb * 8 * 1024 / (runtimeMin * 60)
+            return needKbps <= kbps * 0.75
+        }
+        fun ordered(l: List<StreamItem>): List<StreamItem> {
+            val (fine, heavy) = l.partition { smooth(it) }
+            return fine + heavy
+        }
         // Your own server's copy first, then the addons' (each group keeps its own order).
         fun serverFirst(l: List<StreamItem>) = l.sortedBy { if (it.embyId != null) 0 else 1 }
-        return serverFirst(good) + serverFirst(rest)
+        return serverFirst(ordered(good)) + serverFirst(ordered(rest))
     }
 
     private val streamCache = HashMap<String, Pair<Long, Deferred<List<StreamItem>>>>()
@@ -1251,6 +1376,7 @@ class AppModel(private val activity: MainActivity) {
         activity.playerLauncher.launch(
             PlayerActivity.intent(activity, p.req, s, subs, start, next, season, p.autoChain)
                 .putExtra("part", part).putExtra("parts", parts).putExtra("runtime", partLen)
+                .putExtra("sourceKey", s.sourceKey)
                 .apply {
                     if (group != null && partLen > 0) {
                         putExtra("groupNextKnown", true).putExtra("groupParts", group.size).putExtra("partLen", partLen)
@@ -1333,6 +1459,7 @@ class AppModel(private val activity: MainActivity) {
 
         when (outcome) {
             "error" -> {
+                p.streams.getOrNull(p.index)?.let { Store.markSourceBad(it.sourceKey) }
                 val codes = if (httpCode > 0) p.httpCodes + httpCode else p.httpCodes
                 if (p.auto && p.index + 1 < p.streams.size && p.attempts < 5) {
                     toast("That source didn't work — trying the next one")

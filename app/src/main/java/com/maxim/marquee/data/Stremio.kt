@@ -336,6 +336,8 @@ object Repo {
                 ?: if (name != null) newItem(metaId, type, name, poster, removed = true, temp = true) else return
             val state = item.obj("state") ?: return
             val now = isoNow()
+            // Not in your list: kept as a "temporary" entry, like Stremio does, so it shows in Continue Watching.
+            if (item.optBoolean("removed")) item.put("temp", true)
             state.put("lastWatched", now)
             state.put("duration", dur)
             if (!finished) {

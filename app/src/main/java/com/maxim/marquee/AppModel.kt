@@ -910,8 +910,10 @@ class AppModel(private val activity: MainActivity) {
             val p = list.maxByOrNull { it.updated } ?: return@forEach
             val lib = inLibrary[metaId]
             val libTime = lib?.let { watchedAt(it) } ?: -1
-            if (p.updated <= libTime) return@forEach // Stremio has newer info
-            if (lib != null && lib.removed && !lib.temp) return@forEach // removed from library on purpose
+            val libShows = lib != null && (!lib.removed || lib.temp) && lib.timeOffset > 0
+            if (p.updated <= libTime && libShows) return@forEach // Stremio has newer info (and it's in the row)
+            // Taken out of your library after you last played it here: stays out.
+            if (lib != null && lib.removed && !lib.temp && libTime > p.updated + 60_000) return@forEach
             val finished = p.duration > 0 && p.position >= p.duration * 0.95
             if (finished || p.position <= 0) {
                 byId.remove(metaId)

@@ -168,7 +168,7 @@ private fun CalendarCard(e: AppModel.CalEntry, upcoming: Boolean, fr: FocusReque
                 .background(if (f) Color(0xFF2A2A2A) else Color(0xFF161616)),
         ) {
             Box(Modifier.fillMaxWidth().height(CAL_W * 9f / 16f).clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp)).background(C.Surface)) {
-                val img = e.ep.thumbnail ?: e.meta.background ?: e.meta.poster
+                val img = e.ep.thumbnail ?: e.meta.backdropUrl ?: e.meta.poster
                 if (img != null) AsyncImage(img, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                 Box(
                     Modifier.fillMaxSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color(0xD9000000))),

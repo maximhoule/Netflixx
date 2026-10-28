@@ -359,18 +359,22 @@ private fun Controls(host: PlayerHost, ui: PlayerUiState) {
             Modifier.fillMaxWidth().height(170.dp)
                 .background(Brush.verticalGradient(listOf(Color(0xCC000000), Color.Transparent))),
         )
-        Column(Modifier.align(Alignment.TopStart).padding(start = 48.dp, top = 30.dp)) {
-            Text(host.title, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            host.episode?.let { Text(it, color = C.Dim, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-            if (ui.badges.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ui.badges.forEach { b ->
-                        Text(
-                            b, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
-                            modifier = Modifier.border(1.dp, Color(0x99FFFFFF), RoundedCornerShape(3.dp))
-                                .padding(horizontal = 6.dp, vertical = 2.dp),
-                        )
+        // What you're watching, and nothing else (picture and sound details are under ⓘ).
+        Column(Modifier.align(Alignment.TopStart).padding(start = 48.dp, top = 30.dp, end = 48.dp)) {
+            val ep = host.episode
+            if (ep == null) {
+                Text(host.title, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            } else {
+                Text(host.title, color = Color(0xFFCFCFCF), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // "S4:E12  The Deposition" → "S4:E12 · The Deposition", the episode the bigger line.
+                val parts = ep.split(Regex("\\s{2,}"), limit = 2)
+                Row(verticalAlignment = Alignment.Bottom) {
+                    if (parts.size == 2) {
+                        Text(parts[0], color = C.Dim, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.width(10.dp))
+                        Text(parts[1], color = Color.White, fontSize = 27.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    } else {
+                        Text(ep, color = Color.White, fontSize = 27.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
@@ -409,6 +413,16 @@ private fun Controls(host: PlayerHost, ui: PlayerUiState) {
                         textAlign = androidx.compose.ui.text.style.TextAlign.End, modifier = Modifier.width(TIME_W),
                     )
                 }
+            }
+            // When it finishes, by the clock (at the current speed).
+            if (!ui.live && ui.duration > 0) {
+                val ctx = androidx.compose.ui.platform.LocalContext.current
+                val left = ((ui.duration - ui.position) / ui.speed.coerceAtLeast(0.25f)).toLong()
+                val endsAt = android.text.format.DateFormat.getTimeFormat(ctx).format(java.util.Date(System.currentTimeMillis() + left))
+                Text(
+                    "Ends at $endsAt", color = C.Dim, fontSize = 13.sp,
+                    modifier = Modifier.align(Alignment.End).padding(top = 4.dp),
+                )
             }
             Spacer(Modifier.height(20.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {

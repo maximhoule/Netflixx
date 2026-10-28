@@ -132,7 +132,7 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
     }
 
     // The page takes a deep tint of the artwork's main colour (black until it's worked out).
-    val art = meta.background ?: s.preview.backdropUrl ?: meta.poster
+    val art = meta.backdropUrl ?: s.preview.backdropUrl ?: meta.poster
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val accent by androidx.compose.runtime.produceState<Accent?>(Accent.cached(art), art) { value = Accent.of(ctx, art) }
     val shade by androidx.compose.animation.animateColorAsState(accent?.shade ?: C.Bg, tween(450), label = "shade")
@@ -150,7 +150,7 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
     }
     androidx.compose.runtime.CompositionLocalProvider(LocalWatchMenu provides { ep, back -> watchMenu = ep to back }) {
     Box(Modifier.fillMaxSize().background(shade)) {
-        Backdrop(meta.background ?: s.preview.backdropUrl, Modifier.fillMaxSize(), wide = true, dim = 0.4f, shade = shade)
+        Backdrop(meta.backdropUrl ?: s.preview.backdropUrl, Modifier.fillMaxSize(), wide = true, dim = 0.4f, shade = shade)
         val extras = rememberExtras(meta)
         Column(
             Modifier.fillMaxHeight().width(if (shownSide != null) 540.dp else 720.dp)
@@ -429,6 +429,13 @@ private fun ColumnScope.EpisodesPanel(
     val tmdbThumbs by androidx.compose.runtime.produceState(emptyMap<Int, String>(), meta.id, season) {
         value = runCatching { com.maxim.marquee.data.Tmdb.seasonStills(meta.id, season) }.getOrDefault(emptyMap())
     }
+    // TVmaze: episode pictures, summaries and lengths for any show it knows (free, no key).
+    val maze by androidx.compose.runtime.produceState(emptyList<com.maxim.marquee.data.TvMaze.Ep>(), meta.id) {
+        value = runCatching { com.maxim.marquee.data.TvMaze.episodes(meta.id) }.getOrDefault(emptyList())
+    }
+    val mazeFor = remember(maze, episodes) {
+        if (maze.isEmpty()) emptyMap() else episodes.mapNotNull { v -> com.maxim.marquee.data.TvMaze.match(maze, v)?.let { v.id to it } }.toMap()
+    }
     val sharedThumbs = remember(episodes) {
         episodes.mapNotNull { it.thumbnail }.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
     }
@@ -606,15 +613,20 @@ private fun ColumnScope.EpisodesPanel(
                 i == 0 -> firstFr
                 else -> remember(ep.id) { FocusRequester() }
             }
+            val mz = mazeFor[ep.id]
             EpisodeRow(
                 ep = ep,
                 showSeason = q.isNotEmpty(),
+                overview = ep.overview?.takeIf { it.isNotBlank() } ?: mz?.summary,
+                runtimeMin = mz?.runtimeMin,
+                remainingMin = model.remainingMs(meta.id, ep.id)?.let { ((it + 59_999) / 60_000).toInt() }.also { tick },
                 images = listOfNotNull(
                     ep.thumbnail?.takeIf { it !in sharedThumbs },
                     embyThumbs["${ep.season}:${ep.episode}"],
+                    mz?.image,
                     if (ep.season == season) tmdbThumbs[ep.episode] else null,
                     // No picture of its own anywhere: the show's artwork.
-                    meta.background ?: meta.poster,
+                    meta.backdropUrl ?: meta.poster,
                 ).distinct(),
                 progress = model.progressFor(meta.id, ep.id).also { tick },
                 watched = model.watched(meta.id, ep.id),
@@ -655,6 +667,9 @@ private fun NavText(label: String, icon: ImageVector, iconFirst: Boolean, enable
 private fun EpisodeRow(
     ep: Video,
     showSeason: Boolean,
+    overview: String?,
+    runtimeMin: Int?,
+    remainingMin: Int?,
     images: List<String>,
     progress: Float?,
     watched: Boolean,
@@ -664,7 +679,7 @@ private fun EpisodeRow(
     onLongClick: () -> Unit,
 ) {
     Tile(
-        modifier = Modifier.fillMaxWidth().height(96.dp),
+        modifier = Modifier.fillMaxWidth().height(104.dp),
         shape = RoundedCornerShape(12.dp),
         focusedScale = 1.02f,
         border = true,
@@ -681,7 +696,7 @@ private fun EpisodeRow(
         ) {
             Box(
                 Modifier
-                    .width(142.dp)
+                    .width(156.dp)
                     .fillMaxHeight()
                     .clip(RoundedCornerShape(8.dp))
                     .background(C.Surface),
@@ -712,11 +727,18 @@ private fun EpisodeRow(
                 progress?.let { ProgressLine(it, Modifier.align(Alignment.BottomCenter).fillMaxWidth()) }
             }
             Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f).fillMaxHeight().padding(vertical = 2.dp)) {
+            Column(Modifier.weight(1f).fillMaxHeight().padding(vertical = 1.dp)) {
                 Text(
                     "${ep.episode}. ${ep.title}", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
-                    lineHeight = 19.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    lineHeight = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
+                // A short summary (two lines), so you can tell episodes apart without opening them.
+                overview?.let {
+                    Text(
+                        it, color = Color(0xFFB8B8B8), fontSize = 12.sp, lineHeight = 15.sp,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
                 Spacer(Modifier.weight(1f))
                 val date = ep.released.takeIf { it > 0 }?.let { r ->
                     val d = airDate.format(java.util.Date(r))
@@ -728,8 +750,13 @@ private fun EpisodeRow(
                         Spacer(Modifier.width(8.dp))
                     }
                     Text(
-                        listOfNotNull(if (showSeason) ep.label else null, date).joinToString("  ·  "),
-                        color = Color(0xFF8F8F8F), fontSize = 12.sp, maxLines = 1,
+                        listOfNotNull(
+                            if (showSeason) ep.label else null,
+                            // Started: how much is left. Otherwise its length.
+                            if (remainingMin != null && remainingMin > 0) "$remainingMin min left" else runtimeMin?.let { "$it min" },
+                            date,
+                        ).joinToString("  ·  "),
+                        color = if (remainingMin != null) Color(0xFFDADADA) else Color(0xFF8F8F8F), fontSize = 12.sp, maxLines = 1,
                     )
                 }
             }

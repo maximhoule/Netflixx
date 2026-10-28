@@ -153,14 +153,33 @@ data class MetaItem(
      * thumbnail (sports / live TV), or the community backdrop for IMDb titles.
      */
     val backdropUrl: String?
-        get() = background
+        get() = background?.takeIf { cleanArt(it) }
             ?: poster.takeIf { posterShape.equals("landscape", true) }
-            ?: if (id.startsWith("tt")) "https://images.metahub.space/background/medium/${id.substringBefore(':')}/img" else null
+            ?: if (id.startsWith("tt")) "https://images.metahub.space/background/medium/${id.substringBefore(':')}/img" else background
+
+    /**
+     * Artwork without anything printed on it. Some addons serve backdrops with rating badges
+     * drawn in (IMDb / Rotten Tomatoes strips): for IMDb titles those are swapped for the plain
+     * community backdrop. Known plain sources (TMDB, fanart, TVDB, your Emby server) are kept.
+     */
+    private fun cleanArt(url: String): Boolean {
+        if (!id.startsWith("tt")) return true
+        val u = url.lowercase()
+        if (BADGED.any { it in u }) return false
+        if ("/items/" in u && "/images/" in u) return true // Emby / Jellyfin
+        val host = runCatching { java.net.URI(url).host?.lowercase() }.getOrNull() ?: return true
+        return CLEAN_HOSTS.any { host == it || host.endsWith(".$it") }
+    }
 
     /** Number of real seasons (specials excluded). */
     val seasonCount: Int get() = videos.map { it.season }.filter { it > 0 }.distinct().size
 
     companion object {
+        private val CLEAN_HOSTS = listOf(
+            "image.tmdb.org", "metahub.space", "fanart.tv", "thetvdb.com", "media-amazon.com", "ytimg.com", "tvmaze.com",
+        )
+        private val BADGED = listOf("ratingposterdb", "rpdb", "rating", "badge", "erdb", "top-poster", "topposter")
+
         fun parse(o: JSONObject, fallbackType: String? = null): MetaItem? {
             val id = o.str("id") ?: o.str("imdb_id") ?: return null
             val name = o.str("name") ?: o.str("title") ?: return null

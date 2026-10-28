@@ -816,7 +816,7 @@ class AppModel(private val activity: MainActivity) {
             val m = c.meta
             scope.launch {
                 val full = Repo.cachedMeta(m.type, m.id) ?: Repo.meta(m.type, m.id) ?: return@launch
-                (full.background ?: m.backdropUrl)?.let { bg -> imageLoader.enqueue(com.maxim.marquee.ui.backdropRequest(activity, bg)) }
+                (full.backdropUrl ?: m.backdropUrl)?.let { bg -> imageLoader.enqueue(com.maxim.marquee.ui.backdropRequest(activity, bg)) }
             }
         }
     }
@@ -1079,6 +1079,14 @@ class AppModel(private val activity: MainActivity) {
     /** Marked as watched by hand, and not played again since. */
     private fun markedDone(metaId: String, videoId: String): Boolean = manualState(metaId, videoId) == true
 
+    /** Time left in an episode you've started (and not finished), or null. */
+    fun remainingMs(metaId: String, videoId: String): Long? {
+        if (manualState(metaId, videoId) != null) return null
+        val (pos, dur) = positionOf(metaId, videoId) ?: return null
+        if (dur <= 0 || pos < 5_000 || pos >= dur * 0.95) return null
+        return dur - pos
+    }
+
     fun progressFor(metaId: String, videoId: String): Float? {
         if (manualState(metaId, videoId) != null) return null
         val (pos, dur) = positionOf(metaId, videoId) ?: return null
@@ -1143,7 +1151,7 @@ class AppModel(private val activity: MainActivity) {
         videoId = video?.id ?: meta.defaultVideoId ?: meta.id,
         name = meta.name,
         poster = meta.poster,
-        background = meta.background,
+        background = meta.backdropUrl,
         episode = video?.let { "${it.label}  ${it.title}" },
     )
 
@@ -1161,7 +1169,7 @@ class AppModel(private val activity: MainActivity) {
             play(
                 PlayReq(
                     type = item.meta.type, metaId = item.meta.id, videoId = vid, name = meta.name,
-                    poster = meta.poster ?: item.meta.poster, background = meta.background,
+                    poster = meta.poster ?: item.meta.poster, background = meta.backdropUrl,
                     episode = video?.let { "${it.label}  ${it.title}" } ?: episodeLabel(vid),
                     startOver = startOver,
                 ),
@@ -1179,7 +1187,7 @@ class AppModel(private val activity: MainActivity) {
         val ids = eps.map { it.id }
         Store.markEpisodes(ids, watched)
         if (!watched) Store.forgetProgress(ids)
-        val req = PlayReq(meta.type, meta.id, ids.last(), meta.name, meta.poster, meta.background)
+        val req = PlayReq(meta.type, meta.id, ids.last(), meta.name, meta.poster, meta.backdropUrl)
         if (watched && meta.isSeries) {
             // Up next moves on only if these are where you're at (or past it), not for an old episode.
             val order = sortedEpisodes(meta).map { it.id }
@@ -1238,7 +1246,7 @@ class AppModel(private val activity: MainActivity) {
         val vid = item.videoId ?: return
         scope.launch {
             val meta = Repo.meta(item.meta.type, item.meta.id) ?: item.meta
-            val req = PlayReq(item.meta.type, item.meta.id, vid, meta.name, meta.poster ?: item.meta.poster, meta.background)
+            val req = PlayReq(item.meta.type, item.meta.id, vid, meta.name, meta.poster ?: item.meta.poster, meta.backdropUrl)
             Store.markEpisodes(listOf(vid), true)
             Store.saveProgress(LocalProgress(req.metaId, req.type, req.name, req.poster, vid, 1, 1, System.currentTimeMillis() - 1))
             val next = if (meta.type == "series") nextVideo(meta, vid) else null

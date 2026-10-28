@@ -1134,6 +1134,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         val v = player.videoFormat
         val a = player.audioFormat
         val lines = mutableListOf<String>()
+        if (ui.badges.isNotEmpty()) lines += "Quality: " + ui.badges.joinToString(" · ")
         if (streamName.isNotBlank()) lines += "Source: $streamName"
         if (v != null) {
             val codec = when (v.sampleMimeType) {

@@ -461,6 +461,7 @@ class AppModel(private val activity: MainActivity) {
         }
         if (com.maxim.marquee.data.Emby.connected) {
             com.maxim.marquee.data.Emby.buildIndex()
+            com.maxim.marquee.data.Emby.preferLocal()
             embyEntries = com.maxim.marquee.data.Emby.resume() + com.maxim.marquee.data.Emby.nextUp()
             refreshContinue()
         } else if (embyEntries.isNotEmpty()) {

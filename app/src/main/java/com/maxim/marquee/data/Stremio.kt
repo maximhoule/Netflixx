@@ -216,7 +216,8 @@ object Repo {
             AppScope.async { safe { Emby.streamsForTitle(type, videoId) } ?: emptyList<StreamItem>() }
         } else null
         val fromAddons = addonStreams(type, videoId)
-        val local: List<StreamItem> = if (emby != null) withTimeoutOrNull(6_000) { emby.await() } ?: emptyList() else emptyList()
+        // Your server's copy is worth a few extra seconds (it's usually the best way to play it).
+        val local: List<StreamItem> = if (emby != null) withTimeoutOrNull(10_000) { emby.await() } ?: emptyList() else emptyList()
         return local + fromAddons
     }
 

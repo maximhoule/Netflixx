@@ -25,6 +25,53 @@ object Emby {
     fun rawId(id: String) = id.removePrefix(PREFIX)
 
     private val server get() = Store.embyServer ?: ""
+
+    /** Your server's home-network address, when you're home and it answers there. */
+    @Volatile private var localBase: String? = null
+    private var localCheckedAt = 0L
+    private var localCheckedFor = ""
+
+    /** Where video is fetched from: the home-network address when available (full speed, no internet round trip). */
+    private val streamBase get() = localBase ?: server
+
+    private fun isPrivateHost(base: String): Boolean {
+        val h = base.substringAfter("://").substringBefore('/').substringBefore(':').lowercase()
+        return h == "localhost" || h.endsWith(".local") || h.startsWith("10.") || h.startsWith("192.168.") ||
+            Regex("^172\\.(1[6-9]|2\\d|3[01])\\.").containsMatchIn(h) || h.startsWith("127.")
+    }
+
+    /**
+     * If you signed in with an internet address (or Emby Connect picked one), video would go out to
+     * the internet and back, limited by your upload speed. When the server also answers on your home
+     * network, video is fetched from there instead, like the Emby app does.
+     */
+    suspend fun preferLocal() {
+        val srv = server
+        if (!connected || srv.isEmpty()) return
+        val now = System.currentTimeMillis()
+        if (srv == localCheckedFor && now - localCheckedAt < 10 * 60_000L) return
+        localCheckedFor = srv
+        localCheckedAt = now
+        if (isPrivateHost(srv)) { localBase = null; return }
+        val info = getObj("/System/Info/Public") ?: return
+        val id = info.str("Id")
+        val addrs = (info.arr("LocalAddresses").strings() + listOfNotNull(info.str("LocalAddress"))).map { it.trimEnd('/') }.distinct()
+        val quick = Http.client.newBuilder()
+            .connectTimeout(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .readTimeout(2500, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .build()
+        val found = withContext(Dispatchers.IO) {
+            addrs.firstOrNull { a ->
+                safe {
+                    quick.newCall(Request.Builder().url("$a/System/Info/Public").build()).execute().use { r ->
+                        r.isSuccessful && (id == null || r.body?.string()?.contains(id) == true)
+                    }
+                } == true
+            }
+        }
+        localBase = found
+        android.util.Log.i("Marquee", "Emby video address: ${found ?: "internet address (not on the home network)"}")
+    }
     private val token get() = Store.embyToken ?: ""
     private val userId get() = Store.embyUserId ?: ""
 
@@ -550,6 +597,7 @@ object Emby {
     /** Direct play of the original file (no transcoding), described so quality badges work. */
     suspend fun streams(videoId: String): List<StreamItem> {
         val raw = rawId(videoId)
+        preferLocal()
         val o = getObj("/Users/$userId/Items/$raw?Fields=MediaSources") ?: return emptyList()
         val sources = o.arr("MediaSources").objects()
         val list = if (sources.isEmpty()) listOf(JSONObject().put("Id", raw)) else sources
@@ -569,7 +617,7 @@ object Emby {
             val subs = streams.filter { it.str("Type") == "Subtitle" && it.optBoolean("IsExternal", false) }.mapNotNull { st ->
                 val idx = st.int("Index") ?: return@mapNotNull null
                 SubTrack(
-                    "$server/Videos/$raw/$sid/Subtitles/$idx/Stream.srt?api_key=$token",
+                    "$streamBase/Videos/$raw/$sid/Subtitles/$idx/Stream.srt?api_key=$token",
                     st.str("Language") ?: "und",
                     (st.str("DisplayTitle") ?: st.str("Language") ?: "Subtitles") + " · Emby",
                 )
@@ -577,7 +625,7 @@ object Emby {
             StreamItem(
                 name = "Emby · Your server\n" + (src.str("Name") ?: "Direct play"),
                 title = parts.joinToString(" · "),
-                url = "$server/Videos/$raw/stream?static=true&MediaSourceId=$sid&api_key=$token",
+                url = "$streamBase/Videos/$raw/stream?static=true&MediaSourceId=$sid&api_key=$token",
                 headers = emptyMap(),
                 subtitles = subs,
                 embyId = PREFIX + raw,
@@ -677,6 +725,8 @@ object Emby {
     fun reset() {
         synchronized(imdbToEmby) { imdbToEmby.clear(); embyToImdb.clear(); nameToEmby.clear() }
         indexedAt = 0
+        localBase = null
+        localCheckedFor = ""
         userData.clear(); introKeys.clear(); episodeIndex.clear(); thumbCache.clear(); episodeRecs.clear(); episodeSpans.clear(); started.clear()
     }
 

@@ -1573,6 +1573,11 @@ class AppModel(private val activity: MainActivity) {
             "lighter" -> {
                 // Same title, a copy your connection can carry, from where you were.
                 val cur = p.streams.getOrNull(p.index)
+                // Never trade your own server's copy away for an internet one.
+                if (cur?.embyId != null) {
+                    toast("Playing from your Emby server — check the TV's network connection")
+                    return
+                }
                 val curMb = cur?.quality?.sizeMb
                 val kbps = Store.bandwidthKbps
                 val runtimeMin = runtimeMs(Repo.cachedMeta(p.req.type, p.req.metaId)?.runtime).let { if (it > 0) it / 60_000 else if (p.req.type == "movie") 110 else 45 }

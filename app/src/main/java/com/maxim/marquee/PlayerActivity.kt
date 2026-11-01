@@ -1243,7 +1243,8 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         stallTimes.addLast(now)
         while (stallTimes.isNotEmpty() && now - stallTimes.first() > 4 * 60_000) stallTimes.removeFirst()
         if (stallTimes.size >= 2 && deepBufferMs == 0L) deepBufferMs = 25_000
-        if (stallTimes.size >= 3 && !heavyAsked) {
+        // From your own Emby server there's nothing lighter to switch to: it just buffers deeper.
+        if (stallTimes.size >= 3 && !heavyAsked && embyId == null) {
             heavyAsked = true
             ui.tooHeavy = mbps(fileBps()) to mbps(connectionBps())
         }
@@ -1303,7 +1304,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
                 Store.bandwidthKbps = if (old <= 0) kbps else (old * 2 + kbps) / 3
             }
             val watchedMs = if (::player.isInitialized) player.currentPosition else 0L
-            if (stalls >= 3 && watchedMs > 60_000) intent.getStringExtra("sourceKey")?.let { Store.markSourceBad(it) }
+            if (stalls >= 3 && watchedMs > 60_000 && embyId == null) intent.getStringExtra("sourceKey")?.let { Store.markSourceBad(it) }
         }
     }
 

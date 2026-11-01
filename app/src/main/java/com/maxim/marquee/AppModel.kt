@@ -1270,7 +1270,10 @@ class AppModel(private val activity: MainActivity) {
         if (wrong.isNotEmpty()) android.util.Log.i("Marquee", "${wrong.size} sources skipped: wrong episode for ${req?.videoId}")
         val runtimeMin = (runtimeMs((meta ?: req?.let { Repo.cachedMeta(it.type, it.metaId) })?.runtime) / 60_000)
             .takeIf { it > 0 } ?: if (req?.type == "movie") 110L else 45L
-        return rankQuality(right, runtimeMin) + rankQuality(wrong, runtimeMin)
+        // Your Emby server's copy always comes first (it plays from your own network), whatever its
+        // quality labels say; then everything else in the usual order.
+        val (server, others) = right.partition { it.embyId != null }
+        return server + rankQuality(others, runtimeMin) + rankQuality(wrong, runtimeMin)
     }
 
     private fun rankQuality(streams: List<StreamItem>, runtimeMin: Long = 60): List<StreamItem> {

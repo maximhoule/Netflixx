@@ -82,6 +82,10 @@ class PlayerUiState {
     var buffered by mutableLongStateOf(0L)
     var playing by mutableStateOf(false)
     var buffering by mutableStateOf(true)
+    /** Under the spinner: buffer progress and connection vs. file speed, when it keeps stalling. */
+    var bufferNote by mutableStateOf<String?>(null)
+    /** "This file is heavier than your connection": (needed Mbps, measured Mbps). */
+    var tooHeavy by mutableStateOf<Pair<Int, Int>?>(null)
     var controls by mutableStateOf(false)
     var panel by mutableStateOf(Panel.NONE)
     var tracks by mutableStateOf(Tracks.EMPTY)
@@ -147,6 +151,10 @@ interface PlayerHost {
     /** Positive = later. 0 resets. */
     fun shiftSubtitles(deltaMs: Long)
     fun setNightMode(on: Boolean)
+    /** Too heavy for the connection: play a lighter copy from the same spot. */
+    fun switchLighter()
+    /** Too heavy, but stay: build a long buffer before carrying on. */
+    fun keepHeavy()
 }
 
 /** <i>…</i> → italics. */
@@ -263,8 +271,18 @@ fun PlayerScreen(host: PlayerHost, ui: PlayerUiState, playerView: PlayerView) {
         AndroidView(factory = { playerView }, modifier = Modifier.fillMaxSize(), update = { it.resizeMode = ui.resize })
 
         if (ui.buffering) {
-            CircularProgressIndicator(color = C.Red, strokeWidth = 4.dp, modifier = Modifier.align(Alignment.Center).size(56.dp))
+            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = C.Red, strokeWidth = 4.dp, modifier = Modifier.size(56.dp))
+                ui.bufferNote?.let {
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        it, color = Color.White, fontSize = 15.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.background(Color(0x99000000), RoundedCornerShape(8.dp)).padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                }
+            }
         }
+        ui.tooHeavy?.let { (need, have) -> TooHeavyCard(host, need, have, Modifier.align(Alignment.Center)) }
 
         if (!ui.controls && (ui.seekFlash != null || ui.thumb != null)) {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -706,5 +724,33 @@ private fun InfoPanel(ui: PlayerUiState) {
     PanelTitle("Playback info")
     Box(Modifier.focusRequester(fr).focusable()) {
         Text(ui.info, color = Color(0xFFDDDDDD), fontSize = 15.sp, lineHeight = 24.sp)
+    }
+}
+
+/** Offered after repeated stalls: this copy needs more speed than the connection gives. */
+@Composable
+private fun TooHeavyCard(host: PlayerHost, needMbps: Int, haveMbps: Int, modifier: Modifier) {
+    val fr = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        tryFocus(fr)
+    }
+    Column(
+        modifier.width(560.dp).background(Color(0xF0141414), RoundedCornerShape(12.dp)).padding(24.dp),
+    ) {
+        Text("This copy is too heavy for your connection", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            if (needMbps > 0 && haveMbps > 0) "It needs about $needMbps Mbps; your TV is getting about $haveMbps Mbps, so it keeps stopping to load."
+            else "It keeps stopping to load: the file is bigger than your connection can keep up with.",
+            color = C.Dim, fontSize = 15.sp, lineHeight = 21.sp,
+        )
+        Spacer(Modifier.height(18.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            ActionButton(text = "Switch to a lighter copy", icon = PlayerIcons.Play, focusRequester = fr, onClick = { host.switchLighter() })
+            ActionButton(text = "Keep this one", onClick = { host.keepHeavy() })
+        }
+        Spacer(Modifier.height(10.dp))
+        Text("Keep this one waits for a longer buffer (about a minute) before carrying on.", color = Color(0xFF8A8A8A), fontSize = 12.sp)
     }
 }

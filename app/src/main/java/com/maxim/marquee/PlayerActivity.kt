@@ -377,9 +377,10 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
 
         // Buffer by memory, not just time: a 4K remux at 80 Mbps fills 100 MB in 10 s.
         val heap = Runtime.getRuntime().maxMemory()
-        val bytes = (heap * 0.3).toLong().coerceIn(32L shl 20, 300L shl 20).toInt()
+        val bytes = (heap * 0.35).toLong().coerceIn(32L shl 20, 300L shl 20).toInt()
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(50_000, 180_000, 1_500, 4_000)
+            // After a stall, wait for 8 s of video (not 4): fewer stop-starts on a slow patch.
+            .setBufferDurationsMs(50_000, 180_000, 1_500, 8_000)
             .setTargetBufferBytes(bytes)
             .setPrioritizeTimeOverSizeThresholds(false)
             // Keep the last 30 s so "back 10 s" is instant instead of re-downloading.
@@ -454,7 +455,10 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         override fun onPlaybackStateChanged(state: Int) {
             ui.buffering = state == Player.STATE_BUFFERING || (state == Player.STATE_IDLE && !started)
             // Stalls mid-playback (not the ones right after a skip you made).
-            if (state == Player.STATE_BUFFERING && started && System.currentTimeMillis() - lastSeekAt > 3_000) stalls++
+            if (state == Player.STATE_BUFFERING && started && System.currentTimeMillis() - lastSeekAt > 3_000) {
+                stalls++
+                onStall()
+            }
             if (state == Player.STATE_READY) {
                 // Part 1 of a split story, but the file is long enough to hold every part:
                 // up next is whatever comes after the whole story.
@@ -677,6 +681,8 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             ui.buffered = player.bufferedPosition
             val now = System.currentTimeMillis()
 
+            deepBufferTick()
+
             // Skip intro / recap: community timings are lined up with this file once its length is known.
             val raw = segmentsRaw
             val fitFor = if (raw == null || dur <= 0) null else listOf(System.identityHashCode(raw), merged)
@@ -883,6 +889,11 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
     private var seekTarget: Long? = null
     private var stalls = 0
     private var lastSeekAt = 0L
+    /** When each recent stall happened (to spot a file heavier than the connection). */
+    private val stallTimes = ArrayDeque<Long>()
+    /** Waiting for this much buffered ahead (ms) before resuming, after repeated stalls; 0 = off. */
+    private var deepBufferMs = 0L
+    private var heavyAsked = false
     private var seekJob: kotlinx.coroutines.Job? = null
 
     override fun seekBy(ms: Long) {
@@ -1205,6 +1216,82 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         val t = type; val v = videoId
         AppScope.launch { runCatching { com.maxim.marquee.data.Trakt.scrobble(action, t, v, pct) } }
     }
+
+    private fun mbps(bps: Long) = (bps / 1_000_000).toInt()
+
+    /** Measured connection speed (bit/s), 0 if unknown. */
+    private fun connectionBps(): Long =
+        runCatching { androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.getSingletonInstance(this).bitrateEstimate }.getOrDefault(0L)
+
+    /** What this file needs (bit/s), from its size and length, else the stream's own bitrate; 0 if unknown. */
+    private fun fileBps(): Long {
+        val mb = intent.getDoubleExtra("sizeMb", 0.0)
+        val dur = player.duration.takeIf { it > 0 && it != C.TIME_UNSET }
+        if (mb > 0 && dur != null) return (mb * 8 * 1_048_576 / (dur / 1000.0)).toLong()
+        val v = player.videoFormat?.bitrate ?: -1
+        val a = player.audioFormat?.bitrate ?: -1
+        return if (v > 0) (v + maxOf(a, 0)).toLong() else 0L
+    }
+
+    /**
+     * Stalls in a row: the connection can't keep up with this file. From the second one, wait for a
+     * longer buffer (fewer, longer pauses instead of constant ones); at the third within a few
+     * minutes, offer a lighter copy.
+     */
+    private fun onStall() {
+        val now = System.currentTimeMillis()
+        stallTimes.addLast(now)
+        while (stallTimes.isNotEmpty() && now - stallTimes.first() > 4 * 60_000) stallTimes.removeFirst()
+        if (stallTimes.size >= 2 && deepBufferMs == 0L) deepBufferMs = 25_000
+        if (stallTimes.size >= 3 && !heavyAsked) {
+            heavyAsked = true
+            ui.tooHeavy = mbps(fileBps()) to mbps(connectionBps())
+        }
+    }
+
+    override fun switchLighter() {
+        ui.tooHeavy = null
+        intent.getStringExtra("sourceKey")?.let { Store.markSourceBad(it) }
+        outcome = "lighter"
+        finish()
+    }
+
+    override fun keepHeavy() {
+        ui.tooHeavy = null
+        deepBufferMs = 60_000
+    }
+
+    /** While waiting for a deep buffer: paused, with progress shown; carries on once it's there. */
+    private fun deepBufferTick() {
+        if (deepBufferMs <= 0 || !::player.isInitialized) return
+        val ahead = player.bufferedPosition - player.currentPosition
+        val waiting = player.playbackState == Player.STATE_BUFFERING || deepWaiting
+        if (!waiting) { ui.bufferNote = null; return }
+        if (!deepWaiting) {
+            deepWaiting = true
+            resumeAfterDeep = player.playWhenReady
+            player.playWhenReady = false
+        }
+        val have = mbps(connectionBps())
+        val need = mbps(fileBps())
+        val speed = if (have > 0 && need > 0) "\nConnection about $have Mbps · this file needs about $need Mbps" else ""
+        ui.buffering = true
+        ui.bufferNote = "Loading ahead so it can play without stopping… ${(ahead / 1000).coerceAtLeast(0)} / ${deepBufferMs / 1000} s$speed"
+        // Enough buffered, or the buffer can't grow any more (memory full): carry on.
+        val stuck = ahead > 5_000 && ahead == lastAhead
+        lastAhead = ahead
+        if (ahead >= deepBufferMs || (stuck && ++stuckTicks >= 8)) {
+            deepWaiting = false
+            stuckTicks = 0
+            ui.bufferNote = null
+            ui.buffering = false
+            if (resumeAfterDeep) player.playWhenReady = true
+        }
+    }
+    private var deepWaiting = false
+    private var resumeAfterDeep = true
+    private var lastAhead = -1L
+    private var stuckTicks = 0
 
     /** Remembers how this source played: your connection speed, and whether it kept stalling. */
     private fun rememberHowItPlayed() {

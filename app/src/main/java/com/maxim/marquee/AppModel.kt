@@ -1458,6 +1458,7 @@ class AppModel(private val activity: MainActivity) {
             PlayerActivity.intent(activity, p.req, s, subs, start, next, season, p.autoChain)
                 .putExtra("part", part).putExtra("parts", parts).putExtra("runtime", partLen)
                 .putExtra("sourceKey", s.sourceKey)
+                .putExtra("sizeMb", s.quality.sizeMb ?: 0.0)
                 .apply {
                     if (group != null && partLen > 0) {
                         putExtra("groupNextKnown", true).putExtra("groupParts", group.size).putExtra("partLen", partLen)
@@ -1563,6 +1564,29 @@ class AppModel(private val activity: MainActivity) {
                         },
                         p.req,
                     )
+                }
+            }
+            "lighter" -> {
+                // Same title, a copy your connection can carry, from where you were.
+                val cur = p.streams.getOrNull(p.index)
+                val curMb = cur?.quality?.sizeMb
+                val kbps = Store.bandwidthKbps
+                val runtimeMin = runtimeMs(Repo.cachedMeta(p.req.type, p.req.metaId)?.runtime).let { if (it > 0) it / 60_000 else if (p.req.type == "movie") 110 else 45 }
+                fun fits(s: StreamItem): Boolean {
+                    val mb = s.quality.sizeMb ?: return false
+                    return kbps <= 0 || mb * 8 * 1024 / (runtimeMin * 60) <= kbps * 0.7
+                }
+                val others = p.streams.withIndex().filter { it.index != p.index && it.value.sourceKey != cur?.sourceKey }
+                val pick = others.firstOrNull { (_, s) -> fits(s) && (curMb == null || (s.quality.sizeMb ?: 0.0) < curMb * 0.7) }
+                    ?: others.firstOrNull { (_, s) -> curMb != null && (s.quality.sizeMb ?: Double.MAX_VALUE) < curMb * 0.7 }
+                    ?: others.firstOrNull { (i, _) -> i > p.index }
+                if (pick == null) {
+                    toast("No lighter copy found — pick one from the list")
+                    play(p.req, chooseSource = true)
+                } else {
+                    toast("Switching to a lighter copy…")
+                    loading = p.req
+                    playJob = scope.launch { launchStream(p.copy(index = pick.index, attempts = p.attempts + 1)) }
                 }
             }
             "next", "episode" -> scope.launch {

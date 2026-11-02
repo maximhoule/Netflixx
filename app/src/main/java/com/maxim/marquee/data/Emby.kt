@@ -391,6 +391,35 @@ object Emby {
         val year = m.releaseInfo?.take(4)?.toIntOrNull()
         return synchronized(imdbToEmby) { year?.let { nameToEmby["$k|$it"] } ?: nameToEmby[k] }
     }
+    /**
+     * Asks the server directly when its library list doesn't have the title (added since the list
+     * was read, or no IMDb id on the server): by IMDb id among the results, else same name and year.
+     */
+    private suspend fun searchServer(type: String, imdbId: String): String? {
+        val meta = Repo.cachedMeta(type, imdbId) ?: Repo.meta(type, imdbId) ?: return null
+        val kind = if (type == "movie") "Movie" else "Series"
+        val items = getObj(
+            "/Users/$userId/Items?SearchTerm=${enc(meta.name)}&IncludeItemTypes=$kind&Recursive=true" +
+                "&Fields=ProviderIds,ProductionYear&EnableImages=false&Limit=20",
+        )?.arr("Items").objects()
+        if (items.isEmpty()) return null
+        val year = meta.releaseInfo?.take(4)?.toIntOrNull()
+        val k = nameKey(if (type == "movie") "movie" else "series", meta.name)
+        val hit = items.firstOrNull { imdbOf(it) == imdbId }
+            ?: items.firstOrNull { o ->
+                val y = o.int("ProductionYear")
+                o.str("Name")?.let { nameKey(if (type == "movie") "movie" else "series", it) } == k && (year == null || y == null || kotlin.math.abs(y - year) <= 1)
+            }
+            ?: return null
+        val id = hit.str("Id") ?: return null
+        synchronized(imdbToEmby) {
+            imdbToEmby[imdbId] = id
+            embyToImdb.putIfAbsent(id, imdbId)
+        }
+        android.util.Log.i("Marquee", "Emby: found ${meta.name} by searching the server")
+        return id
+    }
+
     private val embyToImdb = HashMap<String, String>()
     private var indexedAt = 0L
 
@@ -673,7 +702,7 @@ object Emby {
         if (isEmby(videoId)) return streams(videoId)
         val p = videoId.split(":")
         if (synchronized(imdbToEmby) { imdbToEmby.isEmpty() }) buildIndex()
-        val embyTitle = synchronized(imdbToEmby) { imdbToEmby[p[0]] } ?: byName(type, p[0]) ?: return emptyList()
+        val embyTitle = synchronized(imdbToEmby) { imdbToEmby[p[0]] } ?: byName(type, p[0]) ?: searchServer(type, p[0]) ?: return emptyList()
         if (type == "movie" || p.size < 3) return streams(PREFIX + embyTitle)
         val key = "${p[p.size - 2]}:${p[p.size - 1]}"
         val eps = episodeIndex[embyTitle] ?: run {

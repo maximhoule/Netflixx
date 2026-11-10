@@ -186,6 +186,24 @@ object Store {
         o.keys().asSequence().mapNotNull { k -> o.optLong(k).takeIf { it > cutoff }?.let { k to it } }.toMap()
     } ?: emptyMap()
 
+    /** The kind of source that last played well for each show ("group|res|hdr|addon"), so its next episodes use the same. */
+    fun sourceChoice(metaId: String): String? = safe {
+        org.json.JSONObject(global.getString("sourceChoice", null) ?: "{}").optJSONObject(metaId)?.optString("s")?.takeIf { it.isNotEmpty() }
+    }
+
+    fun rememberSource(metaId: String, signature: String) {
+        safe {
+            val o = org.json.JSONObject(global.getString("sourceChoice", null) ?: "{}")
+            o.put(metaId, org.json.JSONObject().put("s", signature).put("t", System.currentTimeMillis()))
+            // Keep the 150 most recent shows.
+            if (o.length() > 150) {
+                val old = o.keys().asSequence().toList().sortedBy { o.optJSONObject(it)?.optLong("t") ?: 0 }.take(o.length() - 150)
+                old.forEach { o.remove(it) }
+            }
+            global.edit().putString("sourceChoice", o.toString()).apply()
+        }
+    }
+
     fun markSourceBad(key: String) {
         if (key.isBlank()) return
         val m = badSources().toMutableMap()

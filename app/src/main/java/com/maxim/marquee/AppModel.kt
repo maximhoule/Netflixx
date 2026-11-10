@@ -86,6 +86,11 @@ sealed class Screen {
     data object TraktActivate : Screen()
     /** A title's trailer, full screen in the app's own player (YouTube ids, tried in order). */
     data class Trailer(val title: String, val ids: List<String>) : Screen()
+    /** Everything in one row, as a full-screen grid. Remembers where you were in it. */
+    class SeeAll(val b: BrowseState, val row: RowModel) : Screen() {
+        val grid = LazyGridState()
+        var focus = 0
+    }
     /** A friendly explanation when something goes wrong, with ways forward. */
     data class Problem(val kind: Kind, val message: String? = null, val req: PlayReq? = null) : Screen() {
         enum class Kind { OFFLINE, NO_SOURCES, SERVICE, PLAYBACK }
@@ -237,6 +242,13 @@ class AppModel(private val activity: MainActivity) {
     var searchQuery by mutableStateOf("")
     var searchedQuery = ""
     val myListGrid = LazyGridState()
+    /** The opening animation plays once per launch. */
+    var splashDone by mutableStateOf(false)
+    val homeReady get() = browse.getValue(Tab.HOME).hero != null
+
+    fun openSeeAll(b: BrowseState, row: RowModel) {
+        stack.add(Screen.SeeAll(b, row))
+    }
     var myListFocus = -1
 
     private var trailerPlayer by mutableStateOf<TrailerPlayer?>(null)
@@ -295,7 +307,8 @@ class AppModel(private val activity: MainActivity) {
             addonError = null
             // Set up the trailer player while Home is still loading, not in the middle of browsing.
             // (Its web engine was already loaded in the background when the app opened.)
-            if (Store.trailerMode != 0) scope.launch { delay(1_200); trailer }
+            // (Later than Home's first rows and pictures, so they get the processor to themselves.)
+            if (Store.trailerMode != 0) scope.launch { delay(4_000); trailer }
             try {
                 Repo.refreshAddons()
             } catch (e: CancellationException) {
@@ -304,14 +317,14 @@ class AppModel(private val activity: MainActivity) {
                 if (Repo.addons.isEmpty()) addonError = e.message ?: "Stremio didn't answer"
             }
             addonCount = Repo.addons.size
-            loadEmbyLibraries()
+            loadEmbyLibraries(indexLater = true)
             rebuildRows()
             loadLibrary()
             syncing = false
         }
     }
 
-    private suspend fun loadEmbyLibraries() {
+    private suspend fun loadEmbyLibraries(indexLater: Boolean = false) {
         val emby = com.maxim.marquee.data.Emby
         if (!emby.connected) {
             embyLibraries = emptyList(); return
@@ -324,7 +337,9 @@ class AppModel(private val activity: MainActivity) {
                 libs.forEach { put(org.json.JSONObject().put("id", it.id).put("name", it.name).put("type", it.type ?: "")) }
             }.toString()
         }
-        emby.buildIndex(force = true)
+        // Opening the app: the list of everything on your server is read after Home is up
+        // (it's only needed to find your copy when you press Play, and that waits for it).
+        if (indexLater) scope.launch { delay(2_500); emby.buildIndex(force = true) } else emby.buildIndex(force = true)
     }
 
     /** Emby libraries as they were last time, so the first layout of Home already has their rows. */
@@ -460,10 +475,14 @@ class AppModel(private val activity: MainActivity) {
             scope.launch { checkReminders() }
         }
         if (com.maxim.marquee.data.Emby.connected) {
-            com.maxim.marquee.data.Emby.buildIndex()
-            com.maxim.marquee.data.Emby.preferLocal()
+            // What you were watching first (Continue Watching fills in), then the slower housekeeping.
             embyEntries = com.maxim.marquee.data.Emby.resume() + com.maxim.marquee.data.Emby.nextUp()
             refreshContinue()
+            com.maxim.marquee.data.Emby.preferLocal()
+            val indexed = com.maxim.marquee.data.Emby.indexed
+            com.maxim.marquee.data.Emby.buildIndex()
+            // The index links server titles to their IMDb ids: merge again if it only just arrived.
+            if (!indexed) refreshContinue()
         } else if (embyEntries.isNotEmpty()) {
             embyEntries = emptyList()
             refreshContinue()
@@ -1273,10 +1292,13 @@ class AppModel(private val activity: MainActivity) {
         // Your Emby server's copy always comes first (it plays from your own network), whatever its
         // quality labels say; then everything else in the usual order.
         val (server, others) = right.partition { it.embyId != null }
-        return server + rankQuality(others, runtimeMin) + rankQuality(wrong, runtimeMin)
+        // A show sticks to the kind of release that played well last time (same group and quality),
+        // so the picture, sound and subtitles stay the same from one episode to the next.
+        val prefer = req?.takeIf { it.type == "series" }?.let { Store.sourceChoice(it.metaId) }
+        return server + rankQuality(others, runtimeMin, prefer) + rankQuality(wrong, runtimeMin)
     }
 
-    private fun rankQuality(streams: List<StreamItem>, runtimeMin: Long = 60): List<StreamItem> {
+    private fun rankQuality(streams: List<StreamItem>, runtimeMin: Long = 60, prefer: String? = null): List<StreamItem> {
         // "Best available" still never auto-picks above what the TV can show.
         val cap = if (Store.maxQuality > 0) Store.maxQuality else displayMaxHeight
         fun ok(s: StreamItem): Boolean {
@@ -1301,7 +1323,10 @@ class AppModel(private val activity: MainActivity) {
         }
         fun ordered(l: List<StreamItem>): List<StreamItem> {
             val (fine, heavy) = l.partition { smooth(it) }
-            return fine + heavy
+            if (prefer == null) return fine + heavy
+            val E = com.maxim.marquee.data.Episodes
+            // (stable: among equally good matches the usual order stays)
+            return fine.sortedByDescending { E.sameKind(prefer, it) } + heavy
         }
         // Your own server's copy first, then the addons' (each group keeps its own order).
         fun serverFirst(l: List<StreamItem>) = l.sortedBy { if (it.embyId != null) 0 else 1 }
@@ -1541,6 +1566,16 @@ class AppModel(private val activity: MainActivity) {
             refreshContinue()
             delay(1500)
             loadLibrary()
+        }
+
+        // Played fine for a while: this show's next episodes use the same kind of source.
+        if (p.req.type == "series" && outcome != "error" && outcome != "lighter" && !p.external) {
+            p.streams.getOrNull(p.index)?.takeIf { it.embyId == null }?.let { st ->
+                val pr = Store.progress(p.req.videoId)
+                if (outcome == "ended" || outcome == "next" || (pr != null && pr.position > 5 * 60_000L)) {
+                    Store.rememberSource(p.req.metaId, com.maxim.marquee.data.Episodes.signature(st))
+                }
+            }
         }
 
         when (outcome) {

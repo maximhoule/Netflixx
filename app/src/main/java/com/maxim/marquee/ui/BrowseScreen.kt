@@ -43,6 +43,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -61,6 +63,8 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -312,7 +316,8 @@ fun BrowseScreen(model: AppModel, b: BrowseState, active: Boolean = true) {
 @Composable
 private fun HeroBackdrop(model: AppModel, b: BrowseState, active: Boolean, modifier: Modifier) {
     val hero = b.hero
-    val bg = b.heroMeta?.backdropUrl ?: hero?.meta?.backdropUrl
+    // On an episode you're watching: that episode's own picture.
+    val bg = rememberHeroEpisode(b)?.art ?: b.heroMeta?.backdropUrl ?: hero?.meta?.backdropUrl
     // Trailer behind the billboard once you rest on a title for a couple of seconds.
     val trailersOn = Store.trailerMode != 0 && active
     val heroMeta = b.heroMeta
@@ -348,25 +353,73 @@ private fun heroPlay(model: AppModel, item: CardItem, full: com.maxim.marquee.da
     }
 }
 
+/** The episode a Continue Watching tile stands for: its title, summary and picture. */
+private class HeroEpisode(val video: com.maxim.marquee.data.Video, val art: String?, val summary: String?)
+
+@Composable
+private fun rememberHeroEpisode(b: BrowseState): HeroEpisode? {
+    val hero = b.hero ?: return null
+    val vid = hero.videoId ?: return null
+    val m = b.heroMeta ?: return null
+    if (!m.isSeries || m.id != hero.meta.id) return null
+    val v = remember(m, vid) { m.videos.firstOrNull { it.id == vid } } ?: return null
+    val T = com.maxim.marquee.data.TvMaze
+    // (first = looked up yet; the picture only switches once we know which one is best)
+    val maze by produceState(T.cached(m.id)?.let { true to T.match(it, v) } ?: (false to null), m.id, vid) {
+        if (!value.first) value = true to runCatching { T.match(T.episodes(m.id), v) }.getOrNull()
+    }
+    val art = if (maze.first) maze.second?.image ?: v.thumbnail?.takeIf { it.startsWith("http") } else null
+    return HeroEpisode(v, art, v.overview?.takeIf { it.isNotBlank() } ?: maze.second?.summary)
+}
+
 @Composable
 private fun BoxScope.HeroInfo(model: AppModel, b: BrowseState, full: Boolean, playFr: FocusRequester, onButtons: () -> Unit) {
     val hero = b.hero
     if (hero != null) {
         val m = b.heroMeta ?: hero.meta
         val extras = rememberExtras(m)
+        val ep = rememberHeroEpisode(b)
+        // A new title fades in with its picture instead of snapping (the buttons stay put).
+        val heroKey = hero.meta.id + "|" + hero.videoId
+        val fade = remember { Animatable(1f) }
+        var shownKey by remember { mutableStateOf(heroKey) }
+        LaunchedEffect(heroKey) {
+            if (shownKey != heroKey) {
+                fade.snapTo(0f)
+                shownKey = heroKey
+                fade.animateTo(1f, tween(170))
+            }
+        }
+        val shift = with(LocalDensity.current) { 8.dp.toPx() }
         Column(
             Modifier.align(Alignment.BottomStart).padding(start = 48.dp, bottom = 4.dp).width(580.dp),
         ) {
+          Column(
+            Modifier.graphicsLayer {
+                val a = if (shownKey != heroKey) 0f else fade.value
+                alpha = a
+                translationY = (1f - a) * shift
+            },
+          ) {
             TitleArt(m, big = false, extraLogo = extras?.logo)
             Spacer(Modifier.height(10.dp))
-            InfoRow(m, extras?.certification, leading = hero.badge ?: model.ribbonFor(m))
-            m.description?.let {
+            // (the episode gets its own line below, so no "S4:E12" here as well)
+            InfoRow(m, extras?.certification, leading = if (ep != null) hero.badge?.takeIf { it.startsWith("NEXT") }?.let { "NEXT" } else hero.badge ?: model.ribbonFor(m))
+            if (ep != null) {
                 Spacer(Modifier.height(7.dp))
+                Text(
+                    ep.video.label + "  ·  " + ep.video.title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            (ep?.summary ?: m.description)?.let {
+                Spacer(Modifier.height(if (ep != null) 4.dp else 7.dp))
                 Text(
                     it, color = Color(0xFFE6E6E6), fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     lineHeight = 20.sp, modifier = Modifier.width(520.dp),
                 )
             }
+          }
             // The buttons only while you're up here; browsing the rows, they make room for the posters.
             if (full) {
                 Spacer(Modifier.height(12.dp))
@@ -445,6 +498,9 @@ fun CatalogRow(
         } else {
             CompositionLocalProvider(LocalBringIntoViewSpec provides rowSpec) {
                 val rowState = b.rowState(row.key)
+                // A row shows its first titles and ends with "See all" (the whole list as a grid).
+                val seeAll = row.source !is RowSource.Top10 && onClick == null && items.size >= SEE_ALL_FROM
+                val shown = if (seeAll && items.size > ROW_MAX) items.subList(0, ROW_MAX) else items
                 val edgePx = with(LocalDensity.current) { 40.dp.toPx() }
                 LazyRow(
                     state = rowState,
@@ -462,7 +518,7 @@ fun CatalogRow(
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    itemsIndexed(items, key = { i, it -> "$i|${it.meta.id}" }) { i, item ->
+                    itemsIndexed(shown, key = { i, it -> "$i|${it.meta.id}" }) { i, item ->
                         val key = "${row.key}#$i"
                         val fr = remember { FocusRequester() }
                         DisposableEffect(key) {
@@ -514,14 +570,152 @@ fun CatalogRow(
                             focusRequester = fr,
                             onFocus = {
                                 model.onCardFocus(b, key, item)
-                                if (i >= items.size - 6) model.loadMore(b, row)
+                                if (i >= items.size - 6 && items.size < ROW_MAX) model.loadMore(b, row)
                             },
                             onLongClick = { model.openCardMenu(b, item, row.source is RowSource.Continue, row.title) },
                             onClick = onCardClick,
                         )
                     }
+                    if (seeAll) item(key = "see-all") {
+                        val key = "${row.key}#${shown.size}"
+                        val fr = remember { FocusRequester() }
+                        DisposableEffect(key) {
+                            b.cardRequesters[key] = fr
+                            onDispose { if (b.cardRequesters[key] === fr) b.cardRequesters.remove(key) }
+                        }
+                        SeeAllTile(rowShape, fr, onFocus = { b.lastFocusKey = key }) { model.openSeeAll(b, row) }
+                    }
                 }
             }
+        }
+    }
+}
+
+const val SEE_ALL_FROM = 10
+const val ROW_MAX = 30
+
+@Composable
+private fun SeeAllTile(shape: CardShape, fr: FocusRequester, onFocus: () -> Unit, onClick: () -> Unit) {
+    val w = if (shape == CardShape.POSTER) CARD_W else shape.width
+    Tile(
+        modifier = Modifier.width(w).height(w / shape.aspect),
+        focusRequester = fr,
+        onFocus = onFocus,
+        onClick = onClick,
+    ) { f ->
+        Box(Modifier.fillMaxSize().background(if (f) Color(0xFF2E2E2E) else Color(0xFF1A1A1A)))
+        Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                Modifier.size(38.dp).border(1.5.dp, if (f) Color.White else Color(0xFF8A8A8A), RoundedCornerShape(19.dp)),
+                contentAlignment = Alignment.Center,
+            ) { Text("›", color = if (f) Color.White else Color(0xFFB0B0B0), fontSize = 24.sp, fontWeight = FontWeight.Bold) }
+            Spacer(Modifier.height(8.dp))
+            Text("See all", color = if (f) Color.White else Color(0xFFB0B0B0), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+/**
+ * The full list of one row as a grid. More titles load as you go down, for as long as the
+ * catalog has them.
+ */
+@Composable
+fun SeeAllScreen(model: AppModel, screen: com.maxim.marquee.Screen.SeeAll) {
+    val b = screen.b
+    val row = screen.row
+    val items = b.rowItems[row.key] ?: emptyList()
+    val shape = remember(row.key) {
+        if (row.source is RowSource.Continue || row.source is RowSource.NewEpisodes) CardShape.POSTER
+        else items.mapNotNull { CardShape.of(it.meta.posterShape) }.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: CardShape.POSTER
+    }
+    val cell = if (shape == CardShape.POSTER) CARD_W else shape.width
+    val plain = row.source !is RowSource.Continue && row.source !is RowSource.NewEpisodes
+    Column(Modifier.fillMaxSize().background(C.Bg).padding(start = 44.dp, top = 30.dp, end = 36.dp)) {
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(row.title, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.width(12.dp))
+            Text("${items.size} titles", color = Color(0xFF8A8A8A), fontSize = 14.sp, modifier = Modifier.padding(bottom = 4.dp))
+        }
+        Spacer(Modifier.height(8.dp))
+        androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+            state = screen.grid,
+            columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(cell),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+            contentPadding = PaddingValues(start = 8.dp, top = 14.dp, end = 8.dp, bottom = 90.dp),
+            modifier = Modifier.fillMaxSize().focusGroup(),
+        ) {
+            items(items.size, key = { i -> "$i|${items[i].meta.id}" }) { i ->
+                val item = items[i]
+                val fr = remember { FocusRequester() }
+                if (i == screen.focus) {
+                    LaunchedEffect(Unit) {
+                        repeat(3) {
+                            withFrameNanos { }
+                            if (runCatching { fr.requestFocus() }.isSuccess) return@LaunchedEffect
+                        }
+                    }
+                }
+                PosterCard(
+                    item = item,
+                    width = CARD_W,
+                    shape = shape,
+                    ribbon = if (plain) model.ribbonFor(item.meta) else null,
+                    showRating = plain,
+                    focusRequester = fr,
+                    onFocus = {
+                        screen.focus = i
+                        if (i >= items.size - 14) model.loadMore(b, row)
+                    },
+                    onLongClick = { model.openCardMenu(b, item, row.source is RowSource.Continue, row.title) },
+                    onClick = { if (item.videoId != null) model.resume(item) else model.openDetail(item.meta) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The opening animation: the MARQUEE sign lights up left to right while Home gets ready behind
+ * it, then lifts away. It never waits longer than a couple of seconds and never takes the remote.
+ */
+@Composable
+fun SplashOverlay(model: AppModel) {
+    if (model.splashDone) return
+    val draw = remember { Animatable(0f) }
+    val out = remember { Animatable(1f) }
+    LaunchedEffect(Unit) {
+        draw.animateTo(1f, tween(750, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+        // Hold until Home has something to show (but not for long).
+        var waited = 0
+        while (!model.homeReady && model.loggedIn && model.profileGate == com.maxim.marquee.ProfileGate.NONE && waited < 1_500) { delay(50); waited += 50 }
+        delay(150)
+        out.animateTo(0f, tween(280))
+        model.splashDone = true
+    }
+    Box(
+        Modifier.fillMaxSize().graphicsLayer { alpha = out.value }.background(Color.Black),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                Modifier
+                    .graphicsLayer {
+                        val s = 0.94f + 0.06f * draw.value + 0.05f * (1f - out.value)
+                        scaleX = s; scaleY = s
+                    }
+                    // The letters appear from left to right, like a sign being switched on.
+                    .drawWithContent {
+                        val edge = size.width * draw.value
+                        clipRect(left = -40f, top = -40f, right = edge, bottom = size.height * 2f) { this@drawWithContent.drawContent() }
+                    },
+            ) { MarqueeLogo(92.dp) }
+            Spacer(Modifier.height(34.dp))
+            // A thin red line that grows with it.
+            Box(
+                Modifier.width(260.dp).height(3.dp).graphicsLayer { scaleX = draw.value; alpha = draw.value }
+                    .background(Brush.horizontalGradient(listOf(Color.Transparent, C.Red, Color.Transparent))),
+            )
         }
     }
 }

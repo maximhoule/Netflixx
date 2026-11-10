@@ -66,4 +66,19 @@ class EpisodesTest {
         val c2 = Episodes.clean(listOf(ep(6), ep(7), real, ep(8))) { if (it.id == ep(7).id) 1 else 0 }
         assertEquals(listOf(ep(6).id, "emby:real", ep(8).id), c2.map { it.id })
     }
+
+    @Test
+    fun sameKindOfSourceForTheNextEpisode() {
+        val a = file("The.Office.US.S04E05.1080p.BluRay.x265-RARBG.mkv")
+        assertEquals("rarbg", Episodes.releaseGroup(a))
+        assertEquals("", Episodes.releaseGroup(file("The Office S04E06 1080p WEB-DL")))
+        assertEquals("subsplease", Episodes.releaseGroup(file("[SubsPlease] Show - 05 (1080p).mkv")))
+        val sig = Episodes.signature(a)
+        val same = file("The.Office.US.S04E06.1080p.BluRay.x265-RARBG.mkv")
+        val otherGroup = file("The.Office.US.S04E06.1080p.BluRay.x264-DEMAND.mkv")
+        val otherRes = StreamItem("Torrentio 720p", "The.Office.US.S04E06.720p.BluRay.x265-RARBG.mkv", "http://x", emptyMap(), emptyList())
+        assertTrue(Episodes.sameKind(sig, same) > 0)
+        assertEquals(0, Episodes.sameKind(sig, otherGroup))
+        assertEquals(0, Episodes.sameKind(sig, otherRes))
+    }
 }

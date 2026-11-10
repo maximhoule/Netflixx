@@ -246,6 +246,7 @@ fun AppRoot(model: AppModel, exit: () -> Unit) {
                         is Screen.TraktActivate -> com.maxim.marquee.ui.TraktActivateScreen(model)
                         is Screen.Trailer -> com.maxim.marquee.ui.TrailerScreen(model, top)
                         is Screen.Problem -> ProblemScreen(model, top)
+                        is Screen.SeeAll -> com.maxim.marquee.ui.SeeAllScreen(model, top)
                     }
                 }
                 // Back: close the top screen; on the home screens go to the menu first, then exit.
@@ -279,6 +280,7 @@ fun AppRoot(model: AppModel, exit: () -> Unit) {
             model.updateStatus?.let { UpdateBanner(it, model.updateProgress) }
             model.reminder?.let { com.maxim.marquee.ui.ReminderBanner(it, Modifier.align(Alignment.BottomEnd)) }
             PerfOverlay(Modifier.align(Alignment.TopEnd))
+            com.maxim.marquee.ui.SplashOverlay(model)
         }
     }
 }

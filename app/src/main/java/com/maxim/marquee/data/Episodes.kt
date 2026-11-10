@@ -105,6 +105,49 @@ object Episodes {
         return null
     }
 
+    private val GROUP_END = Regex("""-([A-Za-z0-9]{2,16})(?:\.(?:mkv|mp4|avi|m4v|ts))?\s*$""")
+    private val GROUP_START = Regex("""^\[([^\]]{2,20})]""")
+    private val NOT_GROUPS = setOf("dl", "hd", "rip", "ray", "web", "x264", "x265", "h264", "h265", "hevc", "atmos", "ma", "hr")
+
+    /** The release group in a source's file name ("…x265-NTb.mkv" → "ntb", "[SubsPlease] …" → "subsplease"), or "". */
+    fun releaseGroup(s: StreamItem): String {
+        val lines = listOfNotNull(s.fileName) + s.title.lines()
+        for (l in lines) {
+            val t = l.trim()
+            if (t.length < 8) continue
+            GROUP_START.find(t)?.let { return it.groupValues[1].lowercase() }
+            val g = GROUP_END.find(t)?.groupValues?.get(1)?.lowercase() ?: continue
+            if (g !in NOT_GROUPS && !g.all { it.isDigit() }) return g
+        }
+        return ""
+    }
+
+    /** What kind of source this is, to pick the same kind for the show's next episodes. */
+    fun signature(s: StreamItem): String {
+        val q = s.quality
+        val hdr = if (q.dv) "dv" else if (q.hdr != null) "hdr" else "sdr"
+        return "${releaseGroup(s)}|${q.res}|$hdr"
+    }
+
+    /**
+     * How closely [s] matches a remembered [signature]: 0 = not the same kind. Same release group
+     * and resolution counts as the same; without a group name, the same resolution and HDR kind.
+     */
+    fun sameKind(signature: String, s: StreamItem): Int {
+        val p = signature.split('|')
+        if (p.size < 3) return 0
+        val mine = this.signature(s).split('|')
+        if (mine[1] != p[1]) return 0
+        val group = p[0].isNotEmpty() && mine[0] == p[0]
+        val hdr = mine[2] == p[2]
+        return when {
+            group && hdr -> 3
+            group -> 2
+            p[0].isEmpty() && hdr -> 1
+            else -> 0
+        }
+    }
+
     /** True when [s] clearly is a different episode than [v] (its name says another one). */
     fun mismatch(s: StreamItem, all: List<Video>, v: Video): Boolean {
         if (s.embyId != null) return false // your server already matched it by number and title

@@ -193,7 +193,7 @@ data class MetaItem(
                 id = id,
                 type = o.str("type") ?: fallbackType ?: "movie",
                 name = name,
-                poster = o.str("poster"),
+                poster = lightPoster(o.str("poster")),
                 background = o.str("background"),
                 logo = o.str("logo"),
                 description = o.str("description"),
@@ -365,7 +365,7 @@ data class LibEntry(
                 id = id,
                 type = o.str("type") ?: "other",
                 name = o.str("name") ?: "",
-                poster = o.str("poster"),
+                poster = lightPoster(o.str("poster")),
                 removed = o.optBoolean("removed", false),
                 temp = o.optBoolean("temp", false),
                 mtime = parseIso(o.str("_mtime")),
@@ -379,6 +379,16 @@ data class LibEntry(
         }
     }
 }
+
+private val TMDB_BIG = Regex("(image\\.tmdb\\.org/t/p/)(original|w1280|w780|w500)/")
+
+/**
+ * Posters are shown about 240 pixels wide: ask the picture services for that size instead of the
+ * big version (a third of the download, and much less work to decode on the TV).
+ */
+fun lightPoster(url: String?): String? = url
+    ?.replace(TMDB_BIG, "$1w342/")
+    ?.replace("images.metahub.space/poster/large/", "images.metahub.space/poster/medium/")
 
 /** A tile on screen: a title plus optional resume info. */
 data class CardItem(

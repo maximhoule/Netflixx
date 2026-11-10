@@ -12,6 +12,9 @@ object TvMaze {
     private val cache = LruCache<String, List<Ep>>(40)
     private val tags = Regex("<[^>]+>")
 
+    /** Already looked up this session (no waiting), else null. */
+    fun cached(imdbId: String): List<Ep>? = cache.get(imdbId.substringBefore(':'))
+
     /** Every episode of the show with this IMDb id; empty if TVmaze doesn't know it. */
     suspend fun episodes(imdbId: String): List<Ep> {
         val tt = imdbId.substringBefore(':')

@@ -422,6 +422,7 @@ object Emby {
 
     private val embyToImdb = HashMap<String, String>()
     private var indexedAt = 0L
+    val indexed get() = indexedAt > 0
 
     private fun imdbOf(o: JSONObject): String? {
         val p = o.obj("ProviderIds") ?: return null

@@ -81,7 +81,7 @@ key BACK; sleep 3; key BACK; sleep 3; shot back_from_detail
 measure_end details
 
 summary "== see all + opening animation"
-tab 5; sleep 6; key DPAD_DOWN; sleep 1
+tab 5; sleep 6; key DPAD_DOWN DPAD_DOWN; sleep 1
 fast DPAD_RIGHT 34; sleep 2; shot row_end_see_all
 key DPAD_CENTER; sleep 3; shot see_all
 fast DPAD_DOWN 7; sleep 3; shot see_all_scrolled
@@ -89,7 +89,7 @@ key DPAD_CENTER; sleep 5; shot see_all_detail
 key BACK; sleep 2; shot see_all_back
 key BACK; sleep 2; shot see_all_closed
 adb shell am force-stop $PKG; sleep 1
-adb shell am start -n $PKG/.MainActivity > /dev/null 2>&1; sleep 0.9; shot splash
+adb shell am start -n $PKG/.MainActivity > /dev/null 2>&1; sleep 0.6; shot splash_a; shot splash_b; shot splash_c; shot splash_d
 sleep 8; shot after_splash
 
 summary "== sports tab"

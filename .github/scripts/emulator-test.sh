@@ -91,6 +91,9 @@ key BACK; sleep 2; shot see_all_closed
 adb shell am force-stop $PKG; sleep 1
 adb shell am start -n $PKG/.MainActivity > /dev/null 2>&1; sleep 0.6; shot splash_a; shot splash_b; shot splash_c; shot splash_d
 sleep 8; shot after_splash
+# Resting on Home, nothing moving: the app should draw (almost) nothing.
+sleep 14; measure_start; sleep 8; measure_end idle_home_8s
+key DPAD_DOWN; sleep 4; measure_start; sleep 8; measure_end idle_home_on_row_8s
 
 summary "== sports tab"
 measure_start
@@ -135,6 +138,8 @@ adb shell am start -n $PKG/.PlayerActivity \
   --es metaId tt1254207 --es videoId tt1254207 --es name "Big\ Buck\ Bunny" --es streamName "Test\ stream" \
   --es subs "'[{\"url\":\"$SUBURL\",\"lang\":\"eng\",\"label\":\"ENG\"}]'" >/dev/null
 sleep 20; shot player_playing
+# Just watching (controls hidden): the app shouldn't redraw anything on top of the video.
+measure_start; sleep 8; measure_end idle_player_8s
 measure_start
 key DPAD_UP; sleep 2; shot player_controls
 key DPAD_UP; key DPAD_RIGHT DPAD_RIGHT DPAD_RIGHT DPAD_CENTER; sleep 2

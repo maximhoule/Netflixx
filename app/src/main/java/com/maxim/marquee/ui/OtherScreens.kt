@@ -3,7 +3,9 @@ package com.maxim.marquee.ui
 import androidx.compose.foundation.layout.heightIn
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -118,11 +120,20 @@ fun StreamsScreen(model: AppModel, s: Screen.Streams) {
         }
     }
 
-    Box(Modifier.fillMaxSize().background(C.Bg)) {
-        Backdrop(s.req.background, Modifier.align(Alignment.TopEnd).fillMaxWidth(0.7f).fillMaxHeight())
-        Box(Modifier.fillMaxSize().background(Color(0x99000000)))
-        Row(Modifier.fillMaxSize().padding(start = 56.dp, top = 48.dp, end = 40.dp)) {
-            Column(Modifier.width(300.dp).padding(end = 28.dp)) {
+    // Same look as the title's own page: its artwork behind, tinted with its main colour, and
+    // the list in a panel on the right.
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val accent by androidx.compose.runtime.produceState<Accent?>(Accent.cached(s.req.background), s.req.background) {
+        value = Accent.of(ctx, s.req.background)
+    }
+    val shade by androidx.compose.animation.animateColorAsState(accent?.shade ?: C.Bg, tween(450), label = "shade")
+    val panel by androidx.compose.animation.animateColorAsState(accent?.panel ?: Color(0xE6151515), tween(450), label = "panel")
+    Box(Modifier.fillMaxSize().background(shade)) {
+        Backdrop(s.req.background, Modifier.fillMaxSize(), wide = true, dim = 0.4f, shade = shade)
+        Row(Modifier.fillMaxSize()) {
+            Column(Modifier.width(330.dp).padding(start = 64.dp, top = 44.dp, end = 22.dp)) {
+                Text("SOURCES", color = C.Red, fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
+                Spacer(Modifier.height(8.dp))
                 Text(s.req.name, color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold, lineHeight = 34.sp, maxLines = 3)
                 s.req.episode?.let {
                     Spacer(Modifier.height(6.dp))
@@ -163,18 +174,27 @@ fun StreamsScreen(model: AppModel, s: Screen.Streams) {
                     )
                 }
             }
-            Column(Modifier.weight(1f).fillMaxHeight()) {
+            Column(
+                Modifier.weight(1f).fillMaxHeight()
+                    .padding(top = 30.dp, end = 26.dp, bottom = 22.dp)
+                    .background(panel, RoundedCornerShape(18.dp))
+                    .border(1.dp, Color(0x24FFFFFF), RoundedCornerShape(18.dp))
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
+            ) {
                 if (tiers.size > 1) {
-                    Row(Modifier.padding(start = 8.dp, bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.padding(start = 2.dp, bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         (listOf("") + tiers).forEach { t ->
                             val label = when (t) { "" -> "All"; "4k" -> "4K"; "1080" -> "1080p"; "720" -> "720p"; "sd" -> "SD"; else -> "Unknown" }
                             val on = filter == t
-                            Tile(focusedScale = 1.04f, border = false, shape = RoundedCornerShape(16.dp), onClick = { filter = t }) { f ->
+                            // (same tabs as on a title's page: moving onto one selects it)
+                            Tile(focusedScale = 1f, border = false, shape = RoundedCornerShape(16.dp), onFocus = { filter = t }, onClick = { filter = t }) { f ->
                                 Text(
-                                    label, color = if (f) Color.Black else Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                                    label,
+                                    color = if (f) Color.Black else if (on) Color.White else Color(0xFF9E9E9E),
+                                    fontSize = 14.sp, fontWeight = if (on || f) FontWeight.Bold else FontWeight.Medium,
                                     modifier = Modifier
-                                        .background(if (f) Color.White else if (on) C.Red else Color(0x26FFFFFF), RoundedCornerShape(16.dp))
-                                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                                        .background(if (f) Color.White else if (on) Color(0x26FFFFFF) else Color.Transparent)
+                                        .padding(horizontal = 14.dp, vertical = 6.dp),
                                 )
                             }
                         }
@@ -182,20 +202,22 @@ fun StreamsScreen(model: AppModel, s: Screen.Streams) {
                 }
                 LazyColumn(
                     Modifier.weight(1f).fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    contentPadding = PaddingValues(bottom = 60.dp, top = 4.dp, start = 6.dp, end = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    contentPadding = PaddingValues(bottom = 40.dp, top = 2.dp, start = 4.dp, end = 4.dp),
                 ) {
                     groups.forEach { g ->
                         val all = open[g.key] == true
                         // (the "another episode" ones stay folded until asked for)
                         val shownCount = if (all) g.items.size else if (g.key == "wrong") 0 else minOf(SOURCES_PER_GROUP, g.items.size)
                         item(key = "h|${g.key}") {
-                            Row(Modifier.padding(start = 4.dp, top = 10.dp, bottom = 2.dp), verticalAlignment = Alignment.Bottom) {
-                                Text(g.title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            Row(Modifier.padding(start = 6.dp, top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.width(3.dp).height(15.dp).background(C.Red, RoundedCornerShape(2.dp)))
+                                Spacer(Modifier.width(9.dp))
+                                Text(g.title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 Spacer(Modifier.width(10.dp))
                                 Text(
                                     g.note ?: if (g.items.size == 1) "1 choice" else "${g.items.size} choices",
-                                    color = Color(0xFF8A8A8A), fontSize = 13.sp, modifier = Modifier.padding(bottom = 2.dp),
+                                    color = Color(0xFF8A8A8A), fontSize = 12.sp,
                                 )
                             }
                         }
@@ -207,14 +229,15 @@ fun StreamsScreen(model: AppModel, s: Screen.Streams) {
                         }
                         if (g.items.size > shownCount) item(key = "m|${g.key}") {
                             Tile(
-                                modifier = Modifier.padding(start = 2.dp),
+                                modifier = Modifier.padding(start = 8.dp, top = 2.dp),
+                                shape = RoundedCornerShape(16.dp),
                                 focusedScale = 1.02f, border = false,
                                 onClick = { open[g.key] = true },
                             ) { f ->
                                 Text(
-                                    if (shownCount == 0) "Show them (${g.items.size})" else "Show ${g.items.size - shownCount} more",
+                                    if (shownCount == 0) "Show them (${g.items.size})" else "Show ${g.items.size - shownCount} more  ›",
                                     color = if (f) Color.Black else Color(0xFFCFCFCF), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.background(if (f) Color.White else Color(0x1AFFFFFF)).padding(horizontal = 16.dp, vertical = 8.dp),
+                                    modifier = Modifier.background(if (f) Color.White else Color(0x1AFFFFFF)).padding(horizontal = 14.dp, vertical = 6.dp),
                                 )
                             }
                         }
@@ -242,17 +265,20 @@ private fun SourceRow(st: StreamItem, isBest: Boolean, fr: FocusRequester?, onCl
     val badges = remember(st) { st.quality.badges.filterNot { it == "REMUX" || it.endsWith(" GB") || it.endsWith(" MB") || it == "AV1" } }
     val file = remember(st) { (st.fileName ?: st.title.lineSequence().firstOrNull { it.isNotBlank() } ?: st.name).trim() }
     val from = remember(st) { st.name.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: "" }
+    // Focus the way episodes show it: the row lifts with a white outline.
     Tile(
         modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
         focusedScale = 1.02f,
-        border = false,
+        border = true,
         focusRequester = fr,
         onClick = onClick,
-    ) { f ->
+    ) { hasFocus ->
+        val f = false // (text keeps its colours; the outline shows the focus)
         Row(
             Modifier.fillMaxWidth()
-                .background(if (f) Color.White else Color(0x26FFFFFF))
-                .padding(horizontal = 16.dp, vertical = 9.dp),
+                .background(if (hasFocus) Color(0xFF2A2A2A) else Color(0x12FFFFFF))
+                .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
@@ -277,8 +303,8 @@ private fun SourceRow(st: StreamItem, isBest: Boolean, fr: FocusRequester?, onCl
                     codec?.let { Badge(it, f) }
                 }
                 Text(
-                    file, color = if (f) Color(0xFF444444) else C.Dim, fontSize = 12.sp,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp),
+                    file, color = if (hasFocus) Color(0xFFD0D0D0) else Color(0xFF9A9A9A), fontSize = 12.sp,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 5.dp),
                 )
             }
             Spacer(Modifier.width(14.dp))

@@ -557,12 +557,30 @@ object Emby {
             }
 
     /** Next unwatched episode of shows you're watching. Ranked after anything in progress. */
-    suspend fun nextUp(): List<Entry> =
-        getObj("/Shows/NextUp?UserId=$userId&Limit=40&Fields=$FIELDS&EnableImageTypes=Primary,Backdrop,Logo,Thumb")
-            ?.arr("Items").objects().mapIndexedNotNull { i, o ->
-                val c = episodeCard(o, resumeBadge = true) ?: return@mapIndexedNotNull null
-                Entry(c, parseIso(o.obj("UserData")?.str("LastPlayedDate")).takeIf { it > 0 } ?: (1_000_000L - i), 1, 0)
-            }
+    suspend fun nextUp(): List<Entry> {
+        val items = getObj("/Shows/NextUp?UserId=$userId&Limit=40&Fields=$FIELDS&EnableImageTypes=Primary,Backdrop,Logo,Thumb")
+            ?.arr("Items").objects()
+        if (items.isEmpty()) return emptyList()
+        // The next episode itself was never played, so it has no date: the show's own "last
+        // watched" says where it belongs in Continue Watching (without it, a show whose episode
+        // you finished in another Emby app dropped to the very end of the row).
+        val seriesIds = items.mapNotNull { it.str("SeriesId") }.distinct()
+        val watchedAt = HashMap<String, Long>()
+        if (seriesIds.isNotEmpty()) {
+            getObj("/Users/$userId/Items?Ids=${seriesIds.joinToString(",")}&EnableUserData=true&EnableImages=false")
+                ?.arr("Items").objects().forEach { o ->
+                    val id = o.str("Id") ?: return@forEach
+                    parseIso(o.obj("UserData")?.str("LastPlayedDate")).takeIf { it > 0 }?.let { watchedAt[id] = it }
+                }
+        }
+        return items.mapIndexedNotNull { i, o ->
+            val c = episodeCard(o, resumeBadge = true) ?: return@mapIndexedNotNull null
+            val t = parseIso(o.obj("UserData")?.str("LastPlayedDate")).takeIf { it > 0 }
+                ?: o.str("SeriesId")?.let { watchedAt[it] }
+                ?: (1_000_000L - i)
+            Entry(c, t, 1, 0)
+        }
+    }
 
     private fun episodeCard(o: JSONObject, resumeBadge: Boolean): CardItem? {
         remember(o)

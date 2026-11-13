@@ -224,7 +224,7 @@ object Store {
         set(v) = setBool("autoSkipIntro", v)
 
     var matchFrameRate: Boolean
-        get() = bool("matchFrameRate", false)
+        get() = bool("matchFrameRate", true)
         set(v) = setBool("matchFrameRate", v)
 
     /** 0 small, 1 medium, 2 large, 3 extra large */

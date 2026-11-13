@@ -1042,12 +1042,51 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
 
     // ---------------------------------------------------------------- display / info
 
+    private var contentFps = 0f
+    private var measuringFps = false
+
+    /** Works the frame rate out from the spacing of the first frames shown, then matches the TV to it. */
+    private fun measureFrameRate() {
+        if (measuringFps) return
+        measuringFps = true
+        val times = ArrayList<Long>()
+        val listener = object : androidx.media3.exoplayer.video.VideoFrameMetadataListener {
+            override fun onVideoFrameAboutToBeRendered(
+                presentationTimeUs: Long, releaseTimeNs: Long, format: androidx.media3.common.Format, mediaFormat: android.media.MediaFormat?,
+            ) {
+                if (times.size >= 49) return
+                times += presentationTimeUs
+                if (times.size == 49) {
+                    val gaps = times.zipWithNext { a, b -> b - a }.filter { it > 0 }.sorted()
+                    val fps = snapFps(gaps.getOrNull(gaps.size / 2)?.let { 1_000_000f / it })
+                    runOnUiThread {
+                        runCatching { player.clearVideoFrameMetadataListener(this) }
+                        if (fps != null && !finishing) matchFrameRate(fps)
+                    }
+                }
+            }
+        }
+        player.setVideoFrameMetadataListener(listener)
+    }
+
+    private fun snapFps(v: Float?): Float? {
+        v ?: return null
+        return listOf(23.976f, 24f, 25f, 29.97f, 30f, 50f, 59.94f, 60f).firstOrNull { abs(it - v) / it < 0.004f }
+            // 23.976 and 24 are closer than that: pick the nearer one.
+            ?.let { hit -> listOf(23.976f, 24f, 25f, 29.97f, 30f, 50f, 59.94f, 60f).minByOrNull { abs(it - v) } ?: hit }
+    }
+
     /** Switches the TV to the video's frame rate (24p etc.) when the setting is on. */
-    private fun matchFrameRate() {
+    private fun matchFrameRate(measured: Float? = null) {
         if (frameRateApplied || !Store.matchFrameRate) return
-        val fps = player.videoFormat?.frameRate ?: return
-        if (fps <= 0f) return
+        val fps = measured ?: player.videoFormat?.frameRate?.takeIf { it > 0f }
+        if (fps == null) {
+            // The file doesn't state its frame rate (common with MKV): time its first frames.
+            if (player.videoFormat != null) measureFrameRate()
+            return
+        }
         frameRateApplied = true
+        contentFps = fps
         try {
             @Suppress("DEPRECATION")
             val display = windowManager.defaultDisplay
@@ -1058,7 +1097,8 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
                     val err = (1..3).minOf { k -> abs(m.refreshRate - fps * k) / (fps * k) }
                     if (err < 0.002f) m to err else null
                 }
-                .minByOrNull { it.second }?.first ?: return
+                // (the mode the TV is already in wins a tie: no pointless switch)
+                .minWithOrNull(compareBy({ it.second }, { if (it.first.modeId == cur.modeId) 0 else 1 }))?.first ?: return
             if (best.modeId != cur.modeId) {
                 // The TV goes blank for a moment while it changes refresh rate: hold playback
                 // until it's done, so nothing is missed (and no judder after).
@@ -1163,7 +1203,20 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
                 else -> "SDR"
             }
             val fps = if (v.frameRate > 0) String.format(java.util.Locale.US, " · %.3f fps", v.frameRate) else ""
-            lines += "Video: ${v.width}×${v.height}$fps · $codec · $dynamic"
+            val fps2 = if (fps.isEmpty() && contentFps > 0) String.format(java.util.Locale.US, " · %.3f fps (measured)", contentFps) else fps
+            lines += "Video: ${v.width}×${v.height}$fps2 · $codec · $dynamic"
+            runCatching {
+                @Suppress("DEPRECATION")
+                val m = windowManager.defaultDisplay.mode
+                val shown = if (contentFps > 0) contentFps else v.frameRate
+                val k = if (shown > 0) (1..3).firstOrNull { abs(m.refreshRate - shown * it) / (shown * it) < 0.002f } else null
+                lines += String.format(java.util.Locale.US, "Screen: %.3f Hz", m.refreshRate) + when {
+                    shown <= 0 -> ""
+                    k != null -> " · matches the video"
+                    Store.matchFrameRate -> " · the TV has no matching rate"
+                    else -> " · doesn't match (Match frame rate is off)"
+                }
+            }
             if (v.bitrate > 0) lines += "Video bitrate: ${"%.1f".format(v.bitrate / 1_000_000f)} Mbps"
         }
         if (a != null) {

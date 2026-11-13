@@ -249,6 +249,9 @@ fun StreamsScreen(model: AppModel, s: Screen.Streams) {
 }
 
 private const val SOURCES_PER_GROUP = 3
+private val RES_SUB = mapOf("4K" to "Ultra HD", "1440p" to null, "1080p" to "Full HD", "720p" to "HD", "SD" to null)
+private val HDR_NAMES = mapOf("DV" to "Dolby Vision", "HDR" to "HDR", "HDR10" to "HDR10", "HDR10+" to "HDR10+", "HLG" to "HLG")
+private val SOUND = setOf("Atmos", "TrueHD", "DTS-HD", "DTS", "DD+", "DD", "AAC", "7.1", "5.1", "2.0")
 
 /**
  * One source. Top line: what it is (Blu-ray Remux, WEB…), the cut (IMAX, Extended), picture and
@@ -289,18 +292,30 @@ private fun SourceRow(st: StreamItem, isBest: Boolean, fr: FocusRequester?, onCl
                             modifier = Modifier.background(C.Red, RoundedCornerShape(3.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
                         )
                     }
-                    Text(
-                        if (st.embyId != null) "Your copy" else kind ?: "Other",
-                        color = if (f) Color.Black else Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold,
-                    )
-                    tags.forEach { t ->
-                        Text(
-                            t.uppercase(), color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Black,
-                            modifier = Modifier.background(Color(0xFFF5C518), RoundedCornerShape(3.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
-                        )
+                    // Where it comes from.
+                    when {
+                        st.embyId != null -> QualityBadge("Your copy", BadgeGlyph.SERVER, BadgeTone.BRIGHT)
+                        kind == "Blu-ray Remux" -> QualityBadge("Blu-ray", BadgeGlyph.DISC, BadgeTone.BRIGHT, sub = "Remux")
+                        kind == "Blu-ray" -> QualityBadge("Blu-ray", BadgeGlyph.DISC)
+                        kind == "WEB" -> QualityBadge("Web", BadgeGlyph.GLOBE)
+                        kind == "TV recording" -> QualityBadge("TV", BadgeGlyph.ANTENNA)
+                        kind == "Cinema recording" -> QualityBadge("Cinema cam", BadgeGlyph.CAMERA)
+                        else -> Unit
                     }
-                    badges.forEach { b -> Badge(b, f) }
-                    codec?.let { Badge(it, f) }
+                    // Which cut.
+                    tags.forEach { t -> QualityBadge(t, if (t == "IMAX" || t == "Open Matte") BadgeGlyph.FRAME else BadgeGlyph.FILM, BadgeTone.GOLD) }
+                    // Picture: size, then HDR kinds together.
+                    badges.firstOrNull { it in RES_SUB }?.let {
+                        QualityBadge(it, BadgeGlyph.SCREEN, if (it == "4K") BadgeTone.BRIGHT else BadgeTone.PLAIN, sub = RES_SUB[it], caps = false)
+                    }
+                    badges.filter { it in HDR_NAMES }.takeIf { it.isNotEmpty() }?.let { l ->
+                        QualityBadge(l.joinToString(" · ") { HDR_NAMES.getValue(it) }, BadgeGlyph.SUN, BadgeTone.BRIGHT)
+                    }
+                    // Sound: format and speakers in one.
+                    badges.filter { it in SOUND }.takeIf { it.isNotEmpty() }?.let { l ->
+                        QualityBadge(l.joinToString(" "), BadgeGlyph.SPEAKER, if ("Atmos" in l || "TrueHD" in l || "DTS-HD" in l) BadgeTone.BRIGHT else BadgeTone.PLAIN)
+                    }
+                    codec?.let { QualityBadge(it, BadgeGlyph.CHIP) }
                 }
                 Text(
                     file, color = if (hasFocus) Color(0xFFD0D0D0) else Color(0xFF9A9A9A), fontSize = 12.sp,

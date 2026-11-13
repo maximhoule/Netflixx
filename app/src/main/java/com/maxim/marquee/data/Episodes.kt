@@ -105,6 +105,13 @@ object Episodes {
         return null
     }
 
+    private val EDITION = Regex(
+        """(?i)\b(super\s?fan|extended|director'?s cut|uncut|unrated|special edition|remaster(ed)?|theatrical|redux|final cut|ultimate (edition|cut))\b""",
+    )
+
+    /** "superfan", "extended"… when a title's name says it's a special edition of something, else null. */
+    fun edition(name: String): String? = EDITION.find(name)?.value?.lowercase()?.filter { it.isLetter() }
+
     private val GROUP_END = Regex("""-([A-Za-z0-9]{2,16})(?:\.(?:mkv|mp4|avi|m4v|ts))?\s*$""")
     private val GROUP_START = Regex("""^\[([^\]]{2,20})]""")
     private val NOT_GROUPS = setOf("dl", "hd", "rip", "ray", "web", "x264", "x265", "h264", "h265", "hevc", "atmos", "ma", "hr")

@@ -382,7 +382,8 @@ object Emby {
 
     private val nonWord = Regex("[^\\p{L}\\p{N}]+")
     private val parens = Regex("\\([^)]*\\)")
-    private fun nameKey(kind: String, name: String) = kind + "|" + name.lowercase().replace(parens, "").replace(nonWord, "")
+    private fun nameKey(kind: String, name: String) =
+        kind + "|" + name.lowercase().replace(parens, "").replace(nonWord, "") + (Episodes.edition(name)?.let { "|$it" } ?: "")
 
     /** The server's copy of a title it has no IMDb id for: matched by name (and year when known). */
     private fun byName(type: String, imdbId: String): String? {
@@ -440,6 +441,7 @@ object Emby {
         if (items.isEmpty()) return
         withContext(Dispatchers.Default) {
             val a = HashMap<String, String>(); val b = HashMap<String, String>(); val n = HashMap<String, String>()
+            val found = ArrayList<Triple<String, String, Boolean>>()
             items.forEach { o ->
                 val id = o.str("Id") ?: return@forEach
                 // By name too, for titles the server has no IMDb id for.
@@ -450,7 +452,15 @@ object Emby {
                     o.int("ProductionYear")?.let { y -> n["$k|$y"] = id }
                 }
                 val tt = imdbOf(o) ?: return@forEach
-                a[tt] = id; b[id] = tt
+                found += Triple(tt, id, Episodes.edition(o.str("Name") ?: "") != null)
+            }
+            // A special edition (Superfan, Extended…) next to the regular version of the same
+            // title stays a title of its own: its own card, its own progress. Only the regular
+            // one is "the same title" as from your addons.
+            found.groupBy { it.first }.forEach { (tt, list) ->
+                val regular = list.filter { !it.third }
+                val linked = if (regular.isNotEmpty() && regular.size < list.size) regular else list
+                linked.forEach { (_, id, _) -> a[tt] = id; b[id] = tt }
             }
             synchronized(imdbToEmby) {
                 imdbToEmby.clear(); imdbToEmby.putAll(a)

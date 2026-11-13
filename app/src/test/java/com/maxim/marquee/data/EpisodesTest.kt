@@ -99,4 +99,13 @@ class EpisodesTest {
         assertEquals("Blu-ray Remux", SourceGroups.kind(list[2]))
         assertEquals("WEB", SourceGroups.kind(list[3]))
     }
+
+    @Test
+    fun specialEditionsAreTheirOwnTitle() {
+        assertEquals("superfan", Episodes.edition("The Office: Superfan Episodes"))
+        assertEquals("superfan", Episodes.edition("The Office (Super Fan Edition)"))
+        assertEquals("extended", Episodes.edition("The Lord of the Rings (Extended)"))
+        assertNull(Episodes.edition("The Office"))
+        assertNull(Episodes.edition("The Office (US)"))
+    }
 }

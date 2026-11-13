@@ -339,7 +339,7 @@ class AppModel(private val activity: MainActivity) {
         }
         // Opening the app: the list of everything on your server is read after Home is up
         // (it's only needed to find your copy when you press Play, and that waits for it).
-        if (indexLater) scope.launch { delay(2_500); emby.buildIndex(force = true) } else emby.buildIndex(force = true)
+        if (indexLater) scope.launch { delay(2_500); emby.buildIndex() } else emby.buildIndex(force = true)
     }
 
     /** Emby libraries as they were last time, so the first layout of Home already has their rows. */
@@ -475,14 +475,12 @@ class AppModel(private val activity: MainActivity) {
             scope.launch { checkReminders() }
         }
         if (com.maxim.marquee.data.Emby.connected) {
-            // What you were watching first (Continue Watching fills in), then the slower housekeeping.
+            // The index first: it says which server titles are the same as your addons' (without it
+            // a show would get one card now and turn into another a moment later).
+            com.maxim.marquee.data.Emby.buildIndex()
+            com.maxim.marquee.data.Emby.preferLocal()
             embyEntries = com.maxim.marquee.data.Emby.resume() + com.maxim.marquee.data.Emby.nextUp()
             refreshContinue()
-            com.maxim.marquee.data.Emby.preferLocal()
-            val indexed = com.maxim.marquee.data.Emby.indexed
-            com.maxim.marquee.data.Emby.buildIndex()
-            // The index links server titles to their IMDb ids: merge again if it only just arrived.
-            if (!indexed) refreshContinue()
         } else if (embyEntries.isNotEmpty()) {
             embyEntries = emptyList()
             refreshContinue()
@@ -1689,7 +1687,9 @@ class AppModel(private val activity: MainActivity) {
     /** A title's name, simplified, so "The Office (US)" from one source matches "The Office" from another. */
     private fun nameKey(type: String, name: String): String =
         "name:" + (if (type == "movie") "movie" else "series") + "|" +
-            name.lowercase().replace(PARENS, "").replace(NON_WORD, "")
+            name.lowercase().replace(PARENS, "").replace(NON_WORD, "") +
+            // (a Superfan / Extended edition is its own title, not the regular one again)
+            (com.maxim.marquee.data.Episodes.edition(name)?.let { "|$it" } ?: "")
 
     private val PARENS = Regex("\\([^)]*\\)")
     private val NON_WORD = Regex("[^\\p{L}\\p{N}]+")

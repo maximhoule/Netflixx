@@ -81,4 +81,22 @@ class EpisodesTest {
         assertEquals(0, Episodes.sameKind(sig, otherGroup))
         assertEquals(0, Episodes.sameKind(sig, otherRes))
     }
+
+    @Test
+    fun sourcesFoldIntoAFewChoices() {
+        fun src(addon: String, name: String) = StreamItem(addon, name, "http://x/" + addon + name.hashCode(), emptyMap(), emptyList())
+        val list = listOf(
+            src("A 1080p", "Movie.2020.1080p.BluRay.x264-GRP.mkv\n8.1 GB"),
+            src("B 1080p", "Movie.2020.1080p.BluRay.x264-GRP.mkv\n8.1 GB"),
+            src("A 4K", "Movie.2020.2160p.UHD.BluRay.REMUX.DV.HDR-FGT.mkv\n58 GB"),
+            src("A 1080p", "Movie.2020.1080p.WEB-DL.DDP5.1-NTb.mkv\n5 GB"),
+            src("C", "Movie"), src("C", "Movie"),
+        )
+        val groups = SourceGroups.group(list)
+        assertEquals(listOf("1080", "4khdr", "other"), groups.map { it.key })
+        assertEquals(2, groups[0].items.size)
+        assertEquals(2, groups[2].items.size) // no file name: can't tell they're the same, both stay
+        assertEquals("Blu-ray Remux", SourceGroups.kind(list[2]))
+        assertEquals("WEB", SourceGroups.kind(list[3]))
+    }
 }

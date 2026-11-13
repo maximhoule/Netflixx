@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -97,7 +98,16 @@ fun StreamsScreen(model: AppModel, s: Screen.Streams) {
         done = true
     }
     val flat = results.keys.sorted().flatMap { k -> results.getValue(k).second }
+    // A few clear choices instead of the raw list: duplicates folded, best for this TV first,
+    // three per quality (the rest one press away).
+    val groups = remember(flat) {
+        val (ranked, wrong) = model.rankedSources(s.req, flat)
+        com.maxim.marquee.data.SourceGroups.group(ranked, wrong)
+    }
+    val ordered = remember(groups) { groups.flatMap { it.items } }
+    val open = remember(s) { mutableStateMapOf<String, Boolean>() }
     val firstFr = remember { FocusRequester() }
+    val best = ordered.firstOrNull()
     LaunchedEffect(flat.isNotEmpty()) {
         if (flat.isNotEmpty()) {
             withFrameNanos { }
@@ -118,12 +128,19 @@ fun StreamsScreen(model: AppModel, s: Screen.Streams) {
                 Spacer(Modifier.height(18.dp))
                 Text(
                     when {
-                        !done -> "Finding sources…"
+                        flat.isEmpty() && !done -> "Finding sources…"
                         flat.isEmpty() -> "No playable sources found"
-                        else -> "${flat.size} sources"
+                        ordered.size == 1 -> "1 choice"
+                        else -> "${ordered.size} different choices"
                     },
-                    color = C.Dim, fontSize = 15.sp,
+                    color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
                 )
+                if (flat.size > ordered.size) {
+                    Text(
+                        "${flat.size} found, ${flat.size - ordered.size} were the same file listed again",
+                        color = C.Dim, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
                 if (!done) {
                     Spacer(Modifier.height(14.dp))
                     CircularProgressIndicator(color = C.Red, modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
@@ -135,47 +152,103 @@ fun StreamsScreen(model: AppModel, s: Screen.Streams) {
                         color = C.Dim, fontSize = 13.sp, lineHeight = 18.sp,
                     )
                 }
+                if (ordered.isNotEmpty()) {
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        "Sorted for this TV: the top one is what Play picks by itself.",
+                        color = C.Dim, fontSize = 13.sp, lineHeight = 18.sp,
+                    )
+                }
             }
             LazyColumn(
                 Modifier.weight(1f).fillMaxHeight(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
                 contentPadding = PaddingValues(bottom = 60.dp, top = 4.dp, start = 6.dp, end = 6.dp),
             ) {
-                itemsIndexed(flat, key = { i, st -> "$i|${st.url}" }) { i, st ->
-                    Tile(
-                        modifier = Modifier.fillMaxWidth(),
-                        focusedScale = 1.02f,
-                        border = false,
-                        focusRequester = if (i == 0) firstFr else null,
-                        onClick = { model.playFromList(s.req, flat, i) },
-                    ) { f ->
-                        Row(
-                            Modifier.fillMaxWidth()
-                                .background(if (f) Color.White else Color(0x26FFFFFF))
-                                .padding(horizontal = 18.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
+                groups.forEach { g ->
+                    val all = open[g.key] == true
+                    // (the "another episode" ones stay folded until asked for)
+                    val shownCount = if (all) g.items.size else if (g.key == "wrong") 0 else minOf(SOURCES_PER_GROUP, g.items.size)
+                    item(key = "h|${g.key}") {
+                        Row(Modifier.padding(start = 4.dp, top = 10.dp, bottom = 2.dp), verticalAlignment = Alignment.Bottom) {
+                            Text(g.title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.width(10.dp))
                             Text(
-                                st.name, color = if (f) Color.Black else Color.White, fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold, lineHeight = 18.sp, modifier = Modifier.width(150.dp),
-                                maxLines = 4, overflow = TextOverflow.Ellipsis,
+                                g.note ?: if (g.items.size == 1) "1 choice" else "${g.items.size} choices",
+                                color = Color(0xFF8A8A8A), fontSize = 13.sp, modifier = Modifier.padding(bottom = 2.dp),
                             )
-                            Spacer(Modifier.width(14.dp))
-                            Column {
-                                val badges = st.quality.badges
-                                if (badges.isNotEmpty()) {
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(bottom = 4.dp)) {
-                                        badges.forEach { b -> Badge(b, f) }
-                                    }
-                                }
-                                Text(
-                                    st.title, color = if (f) Color(0xFF333333) else C.Dim, fontSize = 13.sp,
-                                    lineHeight = 18.sp, maxLines = 4, overflow = TextOverflow.Ellipsis,
-                                )
-                            }
+                        }
+                    }
+                    items(shownCount, key = { i -> "s|${g.key}|$i|${g.items[i].url}" }) { i ->
+                        val st = g.items[i]
+                        SourceRow(st, isBest = st === best, fr = if (st === best) firstFr else null) {
+                            model.playFromList(s.req, ordered, ordered.indexOf(st))
+                        }
+                    }
+                    if (g.items.size > shownCount) item(key = "m|${g.key}") {
+                        Tile(
+                            modifier = Modifier.padding(start = 2.dp),
+                            focusedScale = 1.02f, border = false,
+                            onClick = { open[g.key] = true },
+                        ) { f ->
+                            Text(
+                                if (shownCount == 0) "Show them (${g.items.size})" else "Show ${g.items.size - shownCount} more ${g.title}",
+                                color = if (f) Color.Black else Color(0xFFCFCFCF), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.background(if (f) Color.White else Color(0x1AFFFFFF)).padding(horizontal = 16.dp, vertical = 8.dp),
+                            )
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+private const val SOURCES_PER_GROUP = 3
+
+/** One source: what it is in plain words, its badges, and the file name small underneath. */
+@Composable
+private fun SourceRow(st: StreamItem, isBest: Boolean, fr: FocusRequester?, onClick: () -> Unit) {
+    val kind = remember(st) { com.maxim.marquee.data.SourceGroups.kind(st) }
+    val file = remember(st) { (st.fileName ?: st.title.lineSequence().firstOrNull { it.isNotBlank() } ?: st.name).trim() }
+    val from = remember(st) { st.name.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: "" }
+    Tile(
+        modifier = Modifier.fillMaxWidth(),
+        focusedScale = 1.02f,
+        border = false,
+        focusRequester = fr,
+        onClick = onClick,
+    ) { f ->
+        Row(
+            Modifier.fillMaxWidth()
+                .background(if (f) Color.White else Color(0x26FFFFFF))
+                .padding(horizontal = 16.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (isBest) {
+                        Text(
+                            "BEST MATCH", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 0.8.sp,
+                            modifier = Modifier.background(C.Red, RoundedCornerShape(3.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
+                    (if (st.embyId != null) "Your copy" else kind)?.let {
+                        Text(it, color = if (f) Color.Black else Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    }
+                    st.quality.badges.forEach { b -> Badge(b, f) }
+                }
+                Text(
+                    file, color = if (f) Color(0xFF444444) else C.Dim, fontSize = 12.sp,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp),
+                )
+            }
+            if (from.isNotEmpty() && st.embyId == null) {
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    from, color = if (f) Color(0xFF444444) else Color(0xFF8A8A8A), fontSize = 12.sp,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 130.dp),
+                )
             }
         }
     }

@@ -1277,6 +1277,16 @@ class AppModel(private val activity: MainActivity) {
         }
     }
 
+    /** For the sources page: the list in the order the TV handles best, and which ones look like another episode. */
+    fun rankedSources(req: PlayReq, streams: List<StreamItem>): Pair<List<StreamItem>, Set<StreamItem>> {
+        val meta = req.takeIf { it.type == "series" }?.let { Repo.cachedMeta(it.type, it.metaId) }
+        val video = meta?.videos?.firstOrNull { it.id == req.videoId }
+        val wrong = if (meta != null && video != null) {
+            streams.filter { com.maxim.marquee.data.Episodes.mismatch(it, meta.videos, video) }.toSet()
+        } else emptySet()
+        return rank(streams, req) to wrong
+    }
+
     /** Puts the sources the TV handles best first (respecting the max-quality setting). */
     private fun rank(streams: List<StreamItem>, req: PlayReq? = null): List<StreamItem> {
         // A source whose file is clearly another episode (numbering differs between services)

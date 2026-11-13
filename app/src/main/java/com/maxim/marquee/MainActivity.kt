@@ -182,6 +182,12 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        // (test script) the sources page of a film: am start … --es sources tt123 --es name "Title"
+        intent.getStringExtra("sources")?.let { id ->
+            while (model.back()) Unit
+            model.stack.add(Screen.Streams(PlayReq("movie", id, id, intent.getStringExtra("name") ?: id, null, intent.getStringExtra("art"))))
+            return
+        }
         intent.getStringExtra("tab")?.let { name ->
             Tab.entries.firstOrNull { it.name.equals(name, true) }?.let { t ->
                 while (model.back()) Unit

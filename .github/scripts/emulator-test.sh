@@ -107,6 +107,15 @@ key DPAD_DOWN DPAD_DOWN DPAD_CENTER; sleep 6
 key DPAD_CENTER; sleep 25; shot play_no_sources
 key BACK; sleep 2; key BACK; sleep 2
 
+summary "== sources page (test addon with 20 sources)"
+adb shell am start -n $PKG/.MainActivity --es sources tt1254207 --es name "Big\ Buck\ Bunny" \
+  --es art "https://images.metahub.space/background/medium/tt1254207/img" >/dev/null 2>&1
+sleep 8; shot sources
+key DPAD_DOWN DPAD_DOWN DPAD_DOWN; sleep 2; shot sources_down
+fast DPAD_DOWN 8; sleep 2; shot sources_lower
+fast DPAD_UP 14; sleep 1; key DPAD_UP DPAD_RIGHT DPAD_RIGHT; sleep 2; shot sources_1080_tab
+key BACK; sleep 2
+
 summary "== search"
 measure_start
 tab 1; sleep 3; shot search

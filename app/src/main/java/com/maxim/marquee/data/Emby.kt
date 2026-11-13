@@ -666,7 +666,11 @@ object Emby {
             val a = streams.firstOrNull { it.str("Type") == "Audio" && it.optBoolean("IsDefault", false) }
                 ?: streams.firstOrNull { it.str("Type") == "Audio" }
             val parts = mutableListOf<String>()
-            v?.int("Height")?.let { h -> parts += if (h >= 1600) "2160p" else if (h >= 1000) "1080p" else if (h >= 700) "720p" else "${h}p" }
+            // By width too: a wide-screen film is 1920 across but only ~800 tall.
+            val w = v?.int("Width") ?: 0
+            v?.int("Height")?.let { h ->
+                parts += if (h >= 1600 || w >= 3200) "2160p" else if (h >= 1000 || w >= 1800) "1080p" else if (h >= 700 || w >= 1200) "720p" else "${h}p"
+            }
             v?.str("Codec")?.let { parts += it.uppercase() }
             v?.str("VideoRange")?.let { r -> if (!r.equals("SDR", true)) parts += r }
             v?.str("ExtendedVideoType")?.let { t -> if (t.contains("Dolby", true)) parts += "Dolby Vision" }

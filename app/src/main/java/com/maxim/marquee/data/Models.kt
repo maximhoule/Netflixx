@@ -229,9 +229,14 @@ data class Quality(val res: Int, val dv: Boolean, val hdr: String?, val badges: 
     val dvOnly get() = dv && hdr == null
 
     companion object {
+        fun sizeLabel(mb: Double): String =
+            if (mb >= 1024) String.format(java.util.Locale.US, "%.1f GB", mb / 1024) else "${mb.toInt()} MB"
+
         private val SIZE = Regex("""(\d+(?:[.,]\d+)?)\s?(GB|MB|GiB|MiB)""", RegexOption.IGNORE_CASE)
 
-        fun parse(text: String): Quality {
+        fun parse(text: String, sizeBytes: Long? = null): Quality {
+            // Addons like to decorate ("𝟰𝗞 ᵈᵛ"): fancy letters and digits become plain ones first.
+            val text = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFKC)
             val t = text.lowercase()
             fun has(vararg k: String) = k.any { Regex("(^|[^a-z0-9])" + Regex.escape(it) + "($|[^a-z0-9])").containsMatchIn(t) }
             val res = when {
@@ -273,11 +278,13 @@ data class Quality(val res: Int, val dv: Boolean, val hdr: String?, val badges: 
             val av1 = has("av1")
             if (av1) badges += "AV1"
             val size = SIZE.find(text)
-            size?.let { badges += it.groupValues[1].replace(',', '.') + " " + it.groupValues[2].uppercase().replace("I", "") }
-            val mb = size?.let { m ->
+            var mb = size?.let { m ->
                 val v = m.groupValues[1].replace(',', '.').toDoubleOrNull() ?: return@let null
                 if (m.groupValues[2].uppercase().startsWith("G")) v * 1024 else v
             }
+            // The addon's own figure for the file when the text doesn't say.
+            if (mb == null && sizeBytes != null && sizeBytes > 1_000_000) mb = sizeBytes / 1_048_576.0
+            mb?.let { badges += sizeLabel(it) }
             return Quality(res, dv, hdr, badges, av1, mb)
         }
     }
@@ -295,8 +302,10 @@ data class StreamItem(
     val fileName: String? = null,
     /** Episodes this one file holds when it's a double episode (e.g. 3..4), known from the server. */
     val span: IntRange? = null,
+    /** The file's size when the addon states it. */
+    val sizeBytes: Long? = null,
 ) {
-    val quality: Quality by lazy { Quality.parse("$name $title") }
+    val quality: Quality by lazy { Quality.parse("$name $title ${fileName ?: ""}", sizeBytes) }
 
     /** The release this is (its file name), to remember which ones played badly. */
     val sourceKey: String by lazy {
@@ -334,6 +343,7 @@ data class StreamItem(
                 headers = headers,
                 subtitles = o.arr("subtitles").objects().mapNotNull { SubTrack.parse(it, addonName) },
                 fileName = o.obj("behaviorHints")?.str("filename"),
+                sizeBytes = o.obj("behaviorHints")?.optLong("videoSize", 0)?.takeIf { it > 0 },
             )
         }
     }

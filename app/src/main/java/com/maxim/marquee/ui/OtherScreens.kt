@@ -100,14 +100,17 @@ fun StreamsScreen(model: AppModel, s: Screen.Streams) {
     val flat = results.keys.sorted().flatMap { k -> results.getValue(k).second }
     // A few clear choices instead of the raw list: duplicates folded, best for this TV first,
     // three per quality (the rest one press away).
-    val groups = remember(flat) {
-        val (ranked, wrong) = model.rankedSources(s.req, flat)
-        com.maxim.marquee.data.SourceGroups.group(ranked, wrong)
-    }
-    val ordered = remember(groups) { groups.flatMap { it.items } }
+    val SG = com.maxim.marquee.data.SourceGroups
+    val ranked = remember(flat) { model.rankedSources(s.req, flat) }
+    val allGroups = remember(ranked) { SG.group(ranked.first, ranked.second) }
+    val ordered = remember(ranked) { SG.dedupe(ranked.first) }
+    // Quality buttons above the list: "4K" shows only the 4K sections, and so on.
+    var filter by remember(s) { mutableStateOf("") }
+    val tiers = remember(allGroups) { allGroups.map { it.tier }.filter { it.isNotEmpty() }.distinct() }
+    val groups = if (filter.isEmpty() || filter !in tiers) allGroups else allGroups.filter { it.tier == filter || it.key == "server" }
     val open = remember(s) { mutableStateMapOf<String, Boolean>() }
     val firstFr = remember { FocusRequester() }
-    val best = ordered.firstOrNull()
+    val best = allGroups.firstOrNull { it.key == "best" }?.items?.firstOrNull()
     LaunchedEffect(flat.isNotEmpty()) {
         if (flat.isNotEmpty()) {
             withFrameNanos { }
@@ -155,47 +158,65 @@ fun StreamsScreen(model: AppModel, s: Screen.Streams) {
                 if (ordered.isNotEmpty()) {
                     Spacer(Modifier.height(16.dp))
                     Text(
-                        "Sorted for this TV: the top one is what Play picks by itself.",
+                        "Grouped by quality and kind of release, biggest file first.",
                         color = C.Dim, fontSize = 13.sp, lineHeight = 18.sp,
                     )
                 }
             }
-            LazyColumn(
-                Modifier.weight(1f).fillMaxHeight(),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                contentPadding = PaddingValues(bottom = 60.dp, top = 4.dp, start = 6.dp, end = 6.dp),
-            ) {
-                groups.forEach { g ->
-                    val all = open[g.key] == true
-                    // (the "another episode" ones stay folded until asked for)
-                    val shownCount = if (all) g.items.size else if (g.key == "wrong") 0 else minOf(SOURCES_PER_GROUP, g.items.size)
-                    item(key = "h|${g.key}") {
-                        Row(Modifier.padding(start = 4.dp, top = 10.dp, bottom = 2.dp), verticalAlignment = Alignment.Bottom) {
-                            Text(g.title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                g.note ?: if (g.items.size == 1) "1 choice" else "${g.items.size} choices",
-                                color = Color(0xFF8A8A8A), fontSize = 13.sp, modifier = Modifier.padding(bottom = 2.dp),
-                            )
+            Column(Modifier.weight(1f).fillMaxHeight()) {
+                if (tiers.size > 1) {
+                    Row(Modifier.padding(start = 8.dp, bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        (listOf("") + tiers).forEach { t ->
+                            val label = when (t) { "" -> "All"; "4k" -> "4K"; "1080" -> "1080p"; "720" -> "720p"; "sd" -> "SD"; else -> "Unknown" }
+                            val on = filter == t
+                            Tile(focusedScale = 1.04f, border = false, shape = RoundedCornerShape(16.dp), onClick = { filter = t }) { f ->
+                                Text(
+                                    label, color = if (f) Color.Black else Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                                    modifier = Modifier
+                                        .background(if (f) Color.White else if (on) C.Red else Color(0x26FFFFFF), RoundedCornerShape(16.dp))
+                                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                                )
+                            }
                         }
                     }
-                    items(shownCount, key = { i -> "s|${g.key}|$i|${g.items[i].url}" }) { i ->
-                        val st = g.items[i]
-                        SourceRow(st, isBest = st === best, fr = if (st === best) firstFr else null) {
-                            model.playFromList(s.req, ordered, ordered.indexOf(st))
+                }
+                LazyColumn(
+                    Modifier.weight(1f).fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    contentPadding = PaddingValues(bottom = 60.dp, top = 4.dp, start = 6.dp, end = 6.dp),
+                ) {
+                    groups.forEach { g ->
+                        val all = open[g.key] == true
+                        // (the "another episode" ones stay folded until asked for)
+                        val shownCount = if (all) g.items.size else if (g.key == "wrong") 0 else minOf(SOURCES_PER_GROUP, g.items.size)
+                        item(key = "h|${g.key}") {
+                            Row(Modifier.padding(start = 4.dp, top = 10.dp, bottom = 2.dp), verticalAlignment = Alignment.Bottom) {
+                                Text(g.title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    g.note ?: if (g.items.size == 1) "1 choice" else "${g.items.size} choices",
+                                    color = Color(0xFF8A8A8A), fontSize = 13.sp, modifier = Modifier.padding(bottom = 2.dp),
+                                )
+                            }
                         }
-                    }
-                    if (g.items.size > shownCount) item(key = "m|${g.key}") {
-                        Tile(
-                            modifier = Modifier.padding(start = 2.dp),
-                            focusedScale = 1.02f, border = false,
-                            onClick = { open[g.key] = true },
-                        ) { f ->
-                            Text(
-                                if (shownCount == 0) "Show them (${g.items.size})" else "Show ${g.items.size - shownCount} more ${g.title}",
-                                color = if (f) Color.Black else Color(0xFFCFCFCF), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.background(if (f) Color.White else Color(0x1AFFFFFF)).padding(horizontal = 16.dp, vertical = 8.dp),
-                            )
+                        items(shownCount, key = { i -> "s|${g.key}|$i|${g.items[i].url}" }) { i ->
+                            val st = g.items[i]
+                            SourceRow(st, isBest = g.key == "best", fr = if (g.key == "best") firstFr else null) {
+                                model.playFromList(s.req, ordered, ordered.indexOf(st).coerceAtLeast(0))
+                            }
+                        }
+                        if (g.items.size > shownCount) item(key = "m|${g.key}") {
+                            Tile(
+                                modifier = Modifier.padding(start = 2.dp),
+                                focusedScale = 1.02f, border = false,
+                                onClick = { open[g.key] = true },
+                            ) { f ->
+                                Text(
+                                    if (shownCount == 0) "Show them (${g.items.size})" else "Show ${g.items.size - shownCount} more",
+                                    color = if (f) Color.Black else Color(0xFFCFCFCF), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.background(if (f) Color.White else Color(0x1AFFFFFF)).padding(horizontal = 16.dp, vertical = 8.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -206,10 +227,19 @@ fun StreamsScreen(model: AppModel, s: Screen.Streams) {
 
 private const val SOURCES_PER_GROUP = 3
 
-/** One source: what it is in plain words, its badges, and the file name small underneath. */
+/**
+ * One source. Top line: what it is (Blu-ray Remux, WEB…), the cut (IMAX, Extended), picture and
+ * sound. Under it the file's name. On the right, large: its size.
+ */
 @Composable
 private fun SourceRow(st: StreamItem, isBest: Boolean, fr: FocusRequester?, onClick: () -> Unit) {
-    val kind = remember(st) { com.maxim.marquee.data.SourceGroups.kind(st) }
+    val SG = com.maxim.marquee.data.SourceGroups
+    val kind = remember(st) { SG.kind(st) }
+    val tags = remember(st) { SG.tags(st) }
+    val codec = remember(st) { SG.codec(st) }
+    val size = remember(st) { st.quality.sizeMb?.let { com.maxim.marquee.data.Quality.sizeLabel(it) } }
+    // (size is shown on its own; "REMUX" is already in the kind)
+    val badges = remember(st) { st.quality.badges.filterNot { it == "REMUX" || it.endsWith(" GB") || it.endsWith(" MB") || it == "AV1" } }
     val file = remember(st) { (st.fileName ?: st.title.lineSequence().firstOrNull { it.isNotBlank() } ?: st.name).trim() }
     val from = remember(st) { st.name.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: "" }
     Tile(
@@ -233,22 +263,36 @@ private fun SourceRow(st: StreamItem, isBest: Boolean, fr: FocusRequester?, onCl
                             modifier = Modifier.background(C.Red, RoundedCornerShape(3.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
                         )
                     }
-                    (if (st.embyId != null) "Your copy" else kind)?.let {
-                        Text(it, color = if (f) Color.Black else Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (st.embyId != null) "Your copy" else kind ?: "Other",
+                        color = if (f) Color.Black else Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold,
+                    )
+                    tags.forEach { t ->
+                        Text(
+                            t.uppercase(), color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Black,
+                            modifier = Modifier.background(Color(0xFFF5C518), RoundedCornerShape(3.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
                     }
-                    st.quality.badges.forEach { b -> Badge(b, f) }
+                    badges.forEach { b -> Badge(b, f) }
+                    codec?.let { Badge(it, f) }
                 }
                 Text(
                     file, color = if (f) Color(0xFF444444) else C.Dim, fontSize = 12.sp,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp),
                 )
             }
-            if (from.isNotEmpty() && st.embyId == null) {
-                Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(14.dp))
+            Column(horizontalAlignment = Alignment.End, modifier = Modifier.widthIn(min = 84.dp, max = 150.dp)) {
                 Text(
-                    from, color = if (f) Color(0xFF444444) else Color(0xFF8A8A8A), fontSize = 12.sp,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 130.dp),
+                    size ?: "Size unknown", color = if (f) Color.Black else if (size != null) Color.White else Color(0xFF8A8A8A),
+                    fontSize = if (size != null) 17.sp else 12.sp, fontWeight = FontWeight.Bold, maxLines = 1,
                 )
+                if (from.isNotEmpty() && st.embyId == null) {
+                    Text(
+                        from, color = if (f) Color(0xFF444444) else Color(0xFF8A8A8A), fontSize = 11.sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }

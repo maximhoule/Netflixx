@@ -93,11 +93,19 @@ class EpisodesTest {
             src("C", "Movie"), src("C", "Movie"),
         )
         val groups = SourceGroups.group(list)
-        assertEquals(listOf("1080", "4khdr", "other"), groups.map { it.key })
-        assertEquals(2, groups[0].items.size)
-        assertEquals(2, groups[2].items.size) // no file name: can't tell they're the same, both stay
+        assertEquals(listOf("best", "4k|Blu-ray Remux", "1080|Blu-ray", "1080|WEB", "other|null"), groups.map { it.key })
+        assertEquals(1, groups[2].items.size) // listed twice, shown once
+        assertEquals(2, groups[4].items.size) // no file name: can't tell they're the same, both stay
         assertEquals("Blu-ray Remux", SourceGroups.kind(list[2]))
         assertEquals("WEB", SourceGroups.kind(list[3]))
+        // Decorated names and the file name both count; the size shows.
+        val fancy = StreamItem("\uD835\uDFF0\uD835\uDDDE \u1D48\u1D5B", "nice one", "http://y", emptyMap(), emptyList(),
+            fileName = "Movie.2026.2160p.iT.WEB-DL.DDP5.1.Atmos.DV.HDR10+.H.265-GRP.mkv", sizeBytes = 27_702_000_000)
+        assertEquals(2160, fancy.quality.res)
+        assertTrue(fancy.quality.dv)
+        assertEquals("25.8 GB", Quality.sizeLabel(fancy.quality.sizeMb!!))
+        assertEquals("HEVC", SourceGroups.codec(fancy))
+        assertEquals(listOf("IMAX"), SourceGroups.tags(file("Movie.2020.IMAX.1080p.BluRay.x264-GRP.mkv")))
     }
 
     @Test

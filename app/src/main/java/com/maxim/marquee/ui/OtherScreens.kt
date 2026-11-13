@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -285,11 +286,17 @@ private fun SourceRow(st: StreamItem, isBest: Boolean, fr: FocusRequester?, onCl
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                // (a second line when there are many, never squeezed)
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
                     if (isBest) {
                         Text(
                             "BEST MATCH", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 0.8.sp,
-                            modifier = Modifier.background(C.Red, RoundedCornerShape(3.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
+                            modifier = Modifier.height(22.dp).background(C.Red, RoundedCornerShape(4.dp)).padding(horizontal = 7.dp)
+                                .wrapContentHeight(Alignment.CenterVertically),
                         )
                     }
                     // Where it comes from.
@@ -306,10 +313,10 @@ private fun SourceRow(st: StreamItem, isBest: Boolean, fr: FocusRequester?, onCl
                     tags.forEach { t -> QualityBadge(t, if (t == "IMAX" || t == "Open Matte") BadgeGlyph.FRAME else BadgeGlyph.FILM, BadgeTone.GOLD) }
                     // Picture: size, then HDR kinds together.
                     badges.firstOrNull { it in RES_SUB }?.let {
-                        QualityBadge(it, BadgeGlyph.SCREEN, if (it == "4K") BadgeTone.BRIGHT else BadgeTone.PLAIN, sub = RES_SUB[it], caps = false)
+                        QualityBadge(it, BadgeGlyph.SCREEN, if (it == "4K") BadgeTone.BRIGHT else BadgeTone.PLAIN, caps = false)
                     }
                     badges.filter { it in HDR_NAMES }.takeIf { it.isNotEmpty() }?.let { l ->
-                        QualityBadge(l.joinToString(" · ") { HDR_NAMES.getValue(it) }, BadgeGlyph.SUN, BadgeTone.BRIGHT)
+                        QualityBadge(if (l.size == 1) HDR_NAMES.getValue(l[0]) else l.joinToString(" · "), BadgeGlyph.SUN, BadgeTone.BRIGHT)
                     }
                     // Sound: format and speakers in one.
                     badges.filter { it in SOUND }.takeIf { it.isNotEmpty() }?.let { l ->

@@ -156,27 +156,56 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
             Modifier.fillMaxHeight().width(if (shownSide != null) 540.dp else 720.dp)
                 .padding(start = 64.dp, top = 40.dp, bottom = 22.dp),
         ) {
+            // Logo, one line of facts, what Play will give you, the story, then who's in it.
             TitleArt(meta, big = false, extraLogo = extras?.logo)
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(14.dp))
             FactsRow(meta, extras?.certification)
-            if (meta.genres.isNotEmpty()) {
-                Spacer(Modifier.height(16.dp))
-                ChipSection("GENRES", meta.genres.take(4))
+            val pick by androidx.compose.runtime.produceState<com.maxim.marquee.data.StreamItem?>(null, req.videoId) {
+                kotlinx.coroutines.delay(600)
+                value = model.likelySource(req)
             }
-            if (meta.cast.isNotEmpty()) {
-                Spacer(Modifier.height(14.dp))
-                ChipSection("CAST", meta.cast.take(3))
+            androidx.compose.animation.AnimatedVisibility(
+                pick != null,
+                enter = androidx.compose.animation.fadeIn(tween(220)),
+                exit = androidx.compose.animation.fadeOut(tween(120)),
+            ) {
+                pick?.let { st ->
+                    Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        SourceBadges(st, showCodec = false)
+                    }
+                }
             }
             meta.description?.let {
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(14.dp))
                 Text(
                     it, color = Color(0xFFE6E6E6), fontSize = 15.sp, lineHeight = 22.sp,
                     maxLines = 3, overflow = TextOverflow.Ellipsis,
                 )
             }
+            val people = listOfNotNull(
+                meta.genres.take(3).joinToString(", ").takeIf { it.isNotEmpty() }?.let { "Genres" to it },
+                meta.cast.take(3).joinToString(", ").takeIf { it.isNotEmpty() }?.let { "Starring" to it },
+            )
+            people.forEach { (label, value) ->
+                Spacer(Modifier.height(if (label == "Genres") 12.dp else 3.dp))
+                Row {
+                    Text("$label: ", color = Color(0xFF8C8C8C), fontSize = 13.sp)
+                    Text(value, color = Color(0xFFCFCFCF), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
             Spacer(Modifier.weight(1f))
-            progress?.let {
-                ProgressLine(it, Modifier.width(240.dp))
+            progress?.let { p ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ProgressLine(p, Modifier.width(220.dp))
+                    model.remainingMs(meta.id, req.videoId)?.let { ms ->
+                        val min = ((ms + 59_999) / 60_000).toInt()
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            (target?.let { it.label + "  ·  " } ?: "") + if (min >= 60) "${min / 60}h ${min % 60}m left" else "$min min left",
+                            color = Color(0xFFCFCFCF), fontSize = 13.sp,
+                        )
+                    }
+                }
                 Spacer(Modifier.height(10.dp))
             }
             ActionsRow(model, meta, req, target, progress, playFr, extras?.trailers.orEmpty())
@@ -203,14 +232,11 @@ fun DetailScreen(model: AppModel, s: Screen.Detail) {
 @Composable
 private fun FactsRow(meta: MetaItem, cert: String?) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        val gap = Modifier.width(18.dp)
+        val gap = Modifier.width(14.dp)
         val length = if (meta.isSeries && meta.seasonCount > 0) seasonsLabel(meta.seasonCount) else formatRuntime(meta.runtime)
-        length?.let {
-            Text(it, color = Color(0xFFE0E0E0), fontSize = 17.sp)
-            Spacer(gap)
-        }
-        meta.releaseInfo?.let {
-            Text(it, color = Color(0xFFE0E0E0), fontSize = 17.sp)
+        val plain = listOfNotNull(meta.releaseInfo, length, meta.genres.firstOrNull())
+        if (plain.isNotEmpty()) {
+            Text(plain.joinToString("  ·  "), color = Color(0xFFE0E0E0), fontSize = 16.sp, maxLines = 1)
             Spacer(gap)
         }
         (cert ?: meta.certification)?.let {
@@ -225,11 +251,11 @@ private fun FactsRow(meta: MetaItem, cert: String?) {
                 Modifier
                     .background(Color(0x26F5C518), RoundedCornerShape(6.dp))
                     .border(1.5.dp, Color(0xFFB8962E), RoundedCornerShape(6.dp))
-                    .padding(horizontal = 10.dp, vertical = 3.dp),
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(r, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.width(10.dp))
+                Text(r, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(8.dp))
                 Text(
                     "IMDb", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Black,
                     modifier = Modifier.background(Color(0xFFF5C518), RoundedCornerShape(3.dp)).padding(horizontal = 4.dp, vertical = 1.dp),
@@ -238,30 +264,7 @@ private fun FactsRow(meta: MetaItem, cert: String?) {
             Spacer(gap)
         }
         val onEmby = com.maxim.marquee.data.Emby.isEmby(meta.id) || com.maxim.marquee.data.Emby.hasTitle(meta.id)
-        if (onEmby) {
-            Text(
-                "ON YOUR EMBY", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold,
-                modifier = Modifier.background(Color(0xFF52B54B), RoundedCornerShape(3.dp)).padding(horizontal = 7.dp, vertical = 3.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun ChipSection(title: String, values: List<String>) {
-    Text(title, color = Color(0xFFA8A8A8), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 2.sp)
-    Spacer(Modifier.height(8.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        values.forEach { v ->
-            Text(
-                v, color = Color.White, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .widthIn(max = 170.dp)
-                    .background(Color(0x1FFFFFFF), RoundedCornerShape(18.dp))
-                    .border(1.dp, Color(0x40FFFFFF), RoundedCornerShape(18.dp))
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
-            )
-        }
+        if (onEmby) QualityBadge("On your server", BadgeGlyph.SERVER, BadgeTone.PLAIN)
     }
 }
 

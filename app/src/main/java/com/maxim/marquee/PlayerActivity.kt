@@ -258,6 +258,8 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         }
         // Preview pictures while skipping: only your server's ready-made ones (Emby / Jellyfin).
         embyId?.let { id -> lifecycleScope.launch { thumbs = com.maxim.marquee.data.Emby.seekThumbnails(id) } }
+        // Chapter names (your server's copies), shown on the seek bar.
+        embyId?.let { id -> lifecycleScope.launch { ui.chapters = runCatching { com.maxim.marquee.data.Emby.chapters(id) }.getOrDefault(emptyList()) } }
 
         lifecycleScope.launch { ticker() }
         lifecycleScope.launch {
@@ -691,6 +693,12 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
                 segmentsFitFor = fitFor
             }
             val seg = segments
+            // Intro, recap and credits as shaded stretches on the seek bar, chapters as ticks.
+            if (dur > 0) {
+                val m = listOfNotNull(seg?.recap, seg?.intro, seg?.outro?.takeIf { it.startMs < dur && it.startMs >= dur / 2 })
+                    .map { s -> (s.startMs.toFloat() / dur).coerceIn(0f, 1f) to (minOf(s.endMs, dur).toFloat() / dur).coerceIn(0f, 1f) }
+                if (m != ui.marks) ui.marks = m
+            }
             val segs = listOfNotNull(
                 seg?.intro?.let { "Skip Intro" to it },
                 seg?.recap?.let { "Skip Recap" to it },
@@ -733,7 +741,8 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             }
 
             // Auto-hide the controls after a few idle seconds
-            if (ui.controls && ui.panel == Panel.NONE && ui.playing && now - lastInput > 5_000) ui.controls = false
+            // (quicker than before: out of the way 3.5 s after the last press)
+            if (ui.controls && ui.panel == Panel.NONE && ui.playing && now - lastInput > 3_500) ui.controls = false
 
             if (now - lastSecond >= 1_000) {
                 lastSecond = now

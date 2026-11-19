@@ -3,6 +3,7 @@ package com.maxim.marquee.ui
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -110,6 +111,10 @@ class PlayerUiState {
     var subDelay by mutableLongStateOf(0L)
     /** "4K", "Dolby Vision", "Dolby Atmos", "5.1"… */
     var badges by mutableStateOf<List<String>>(emptyList())
+    /** Intro / recap / credits as (from, to) fractions of the length. */
+    var marks by mutableStateOf<List<Pair<Float, Float>>>(emptyList())
+    /** Named chapters: start (ms) and name. */
+    var chapters by mutableStateOf<List<Pair<Long, String>>>(emptyList())
 }
 
 private val THUMB_H = 126.dp
@@ -381,18 +386,18 @@ private fun Controls(host: PlayerHost, ui: PlayerUiState) {
         Column(Modifier.align(Alignment.TopStart).padding(start = 48.dp, top = 30.dp, end = 48.dp)) {
             val ep = host.episode
             if (ep == null) {
-                Text(host.title, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(host.title, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             } else {
-                Text(host.title, color = Color(0xFFCFCFCF), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(host.title, color = Color(0xFFCFCFCF), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 // "S4:E12  The Deposition" → "S4:E12 · The Deposition", the episode the bigger line.
                 val parts = ep.split(Regex("\\s{2,}"), limit = 2)
                 Row(verticalAlignment = Alignment.Bottom) {
                     if (parts.size == 2) {
-                        Text(parts[0], color = C.Dim, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                        Text(parts[0], color = C.Dim, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.width(10.dp))
-                        Text(parts[1], color = Color.White, fontSize = 27.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(parts[1], color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     } else {
-                        Text(ep, color = Color.White, fontSize = 27.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(ep, color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
@@ -402,6 +407,13 @@ private fun Controls(host: PlayerHost, ui: PlayerUiState) {
                 .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xEB000000)))),
         )
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 48.dp, end = 48.dp, bottom = 30.dp)) {
+            // The chapter you're in (your server's copies), above the bar.
+            ui.chapters.lastOrNull { it.first <= ui.position }?.second?.takeIf { it.isNotBlank() }?.let { name ->
+                Text(
+                    name, color = Color(0xFFE6E6E6), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = TIME_W + 16.dp, bottom = 6.dp),
+                )
+            }
             ui.thumb?.let { img ->
                 // Above the seek bar, lined up with where you're seeking to.
                 BoxWithConstraints(Modifier.fillMaxWidth().height(THUMB_H + 14.dp)) {
@@ -514,15 +526,24 @@ private fun SeekBar(host: PlayerHost, ui: PlayerUiState, modifier: Modifier) {
             .focusable(),
         contentAlignment = Alignment.CenterStart,
     ) {
-        Box(
-            Modifier.fillMaxWidth().height(if (focused) 8.dp else 5.dp).clip(RoundedCornerShape(4.dp)).background(Color(0x4DFFFFFF)),
-        ) {
-            Box(Modifier.fillMaxHeight().fillMaxWidth(buf).background(Color(0x66FFFFFF)))
+        val barH by androidx.compose.animation.core.animateDpAsState(if (focused) 6.dp else 3.dp, tween(140), label = "bar")
+        BoxWithConstraints(Modifier.fillMaxWidth().height(barH).clip(RoundedCornerShape(3.dp)).background(Color(0x40FFFFFF))) {
+            val w = maxWidth
+            Box(Modifier.fillMaxHeight().fillMaxWidth(buf).background(Color(0x59FFFFFF)))
+            // Intro / recap / credits: lighter stretches, so you can see what you'd skip.
+            ui.marks.forEach { (a, b) ->
+                Box(Modifier.offset(x = w * a).width(w * (b - a).coerceAtLeast(0.004f)).fillMaxHeight().background(Color(0x8CFFE08A)))
+            }
             Box(Modifier.fillMaxHeight().fillMaxWidth(frac).background(C.Red))
+            // Chapters: small gaps in the bar.
+            ui.chapters.forEach { (at, _) ->
+                val f = at.toFloat() / dur
+                if (f > 0.005f && f < 0.995f) Box(Modifier.offset(x = w * f - 1.dp).width(2.dp).fillMaxHeight().background(Color.Black))
+            }
         }
         BoxWithConstraints(Modifier.fillMaxWidth()) {
-            val d = if (focused) 20.dp else 12.dp
-            Box(Modifier.offset(x = maxWidth * frac - d / 2).size(d).background(C.Red, CircleShape))
+            val d by androidx.compose.animation.core.animateDpAsState(if (focused) 16.dp else 0.dp, tween(140), label = "knob")
+            if (d > 0.dp) Box(Modifier.offset(x = maxWidth * frac - d / 2).size(d).background(Color.White, CircleShape).border(3.dp, C.Red, CircleShape))
         }
     }
 }

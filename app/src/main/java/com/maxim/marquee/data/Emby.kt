@@ -836,6 +836,20 @@ object Emby {
         return if (intro != null || outro != null) Repo.Segments(intro, null, outro) else null
     }
 
+    /** Named chapters of a file on your server (start in ms, name), without the intro/credits markers. */
+    suspend fun chapters(videoId: String): List<Pair<Long, String>> {
+        if (!connected) return emptyList()
+        val raw = rawId(videoId)
+        val list = getObj("/Users/$userId/Items/$raw?Fields=Chapters")?.arr("Chapters").objects()
+        return list.filter { (it.str("MarkerType") ?: "Chapter").equals("Chapter", true) }
+            .mapNotNull { c ->
+                val at = (c.long("StartPositionTicks") ?: return@mapNotNull null) / 10_000
+                at to (c.str("Name")?.takeIf { it.isNotBlank() } ?: "")
+            }
+            // Ten-minute "Chapter 1, Chapter 2…" made up by the server aren't worth showing.
+            .let { l -> if (l.size > 1 && l.all { it.second.matches(Regex("(?i)chapter\\s*\\d+|\\d+")) || it.second.isEmpty() }) emptyList() else l }
+    }
+
     suspend fun seekThumbnails(videoId: String): SeekThumbnails? {
         if (!connected) return null
         val raw = rawId(videoId)

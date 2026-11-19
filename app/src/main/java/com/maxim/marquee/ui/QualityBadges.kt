@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import com.maxim.marquee.data.StreamItem
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -162,4 +164,46 @@ private fun DrawScope.glyph(g: BadgeGlyph, c: Color) {
         }
         BadgeGlyph.NONE -> Unit
     }
+}
+
+private val RES_SUB = mapOf("4K" to "Ultra HD", "1440p" to null, "1080p" to "Full HD", "720p" to "HD", "SD" to null)
+private val HDR_NAMES = mapOf("DV" to "Dolby Vision", "HDR" to "HDR", "HDR10" to "HDR10", "HDR10+" to "HDR10+", "HLG" to "HLG")
+private val SOUND = setOf("Atmos", "TrueHD", "DTS-HD", "DTS", "DD+", "DD", "AAC", "7.1", "5.1", "2.0")
+
+/**
+ * A source's badges, in order: where it comes from, the cut, picture size, HDR, sound and codec.
+ * Call it inside a Row or FlowRow; each badge is a separate item there.
+ */
+@Composable
+fun SourceBadges(st: StreamItem, showCodec: Boolean = true) {
+    val SG = com.maxim.marquee.data.SourceGroups
+    val kind = remember(st) { SG.kind(st) }
+    val tags = remember(st) { SG.tags(st) }
+    val codec = remember(st) { if (showCodec) SG.codec(st) else null }
+    // (size is shown on its own; "REMUX" is already in the kind)
+    val badges = remember(st) { st.quality.badges.filterNot { it == "REMUX" || it.endsWith(" GB") || it.endsWith(" MB") || it == "AV1" } }
+    // Where it comes from.
+    when {
+        st.embyId != null -> QualityBadge("Your copy", BadgeGlyph.SERVER, BadgeTone.BRIGHT)
+        kind == "Blu-ray Remux" -> QualityBadge("Blu-ray", BadgeGlyph.DISC, BadgeTone.BRIGHT, sub = "Remux")
+        kind == "Blu-ray" -> QualityBadge("Blu-ray", BadgeGlyph.DISC)
+        kind == "WEB" -> QualityBadge("Web", BadgeGlyph.GLOBE)
+        kind == "TV recording" -> QualityBadge("TV", BadgeGlyph.ANTENNA)
+        kind == "Cinema recording" -> QualityBadge("Cinema cam", BadgeGlyph.CAMERA)
+        else -> Unit
+    }
+    // Which cut.
+    tags.forEach { t -> QualityBadge(t, if (t == "IMAX" || t == "Open Matte") BadgeGlyph.FRAME else BadgeGlyph.FILM, BadgeTone.GOLD) }
+    // Picture: size, then HDR kinds together.
+    badges.firstOrNull { it in RES_SUB }?.let {
+        QualityBadge(it, BadgeGlyph.SCREEN, if (it == "4K") BadgeTone.BRIGHT else BadgeTone.PLAIN, caps = false)
+    }
+    badges.filter { it in HDR_NAMES }.takeIf { it.isNotEmpty() }?.let { l ->
+        QualityBadge(if (l.size == 1) HDR_NAMES.getValue(l[0]) else l.joinToString(" · "), BadgeGlyph.SUN, BadgeTone.BRIGHT)
+    }
+    // Sound: format and speakers in one.
+    badges.filter { it in SOUND }.takeIf { it.isNotEmpty() }?.let { l ->
+        QualityBadge(l.joinToString(" "), BadgeGlyph.SPEAKER, if ("Atmos" in l || "TrueHD" in l || "DTS-HD" in l) BadgeTone.BRIGHT else BadgeTone.PLAIN)
+    }
+    codec?.let { QualityBadge(it, BadgeGlyph.CHIP) }
 }

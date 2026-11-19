@@ -1045,9 +1045,15 @@ class AppModel(private val activity: MainActivity) {
         refreshContinue()
     }
 
+    /** How far into each title you are (any row's poster shows it as a thin red line). */
+    var progressByMeta by mutableStateOf<Map<String, Float>>(emptyMap())
+        private set
+
     fun refreshContinue() {
         localVersion++
         val items = continueItems()
+        val prog = items.mapNotNull { c -> c.progress?.takeIf { it < 0.97f }?.let { c.meta.id to it } }.toMap()
+        if (prog != progressByMeta) progressByMeta = prog
         browse.values.filter { it.withContinue }.forEach { b ->
             // Same as before (the usual case for the 2-minute sync): leave the row alone, so it
             // doesn't rebuild under you while you're scrolling.
@@ -1276,6 +1282,17 @@ class AppModel(private val activity: MainActivity) {
     }
 
     /** For the sources page: the list in the order the TV handles best, and which ones look like another episode. */
+    /**
+     * The source Play would pick, once the sources looked up in advance have arrived (null when
+     * they aren't being looked up in advance, so the title page never starts a search on its own).
+     */
+    suspend fun likelySource(req: PlayReq): StreamItem? {
+        if (!(com.maxim.marquee.data.Emby.connected || Store.autoplay)) return null
+        val list = runCatching { streamsFor(req.type, req.videoId).await() }.getOrNull() ?: return null
+        val (ranked, wrong) = rankedSources(req, list)
+        return ranked.firstOrNull { it !in wrong }
+    }
+
     fun rankedSources(req: PlayReq, streams: List<StreamItem>): Pair<List<StreamItem>, Set<StreamItem>> {
         val meta = req.takeIf { it.type == "series" }?.let { Repo.cachedMeta(it.type, it.metaId) }
         val video = meta?.videos?.firstOrNull { it.id == req.videoId }

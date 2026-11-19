@@ -169,7 +169,7 @@ fun Tile(
 
 @Composable
 fun ProgressLine(fraction: Float, modifier: Modifier = Modifier) {
-    Box(modifier.height(4.dp).background(C.Faint)) {
+    Box(modifier.height(3.dp).clip(RoundedCornerShape(2.dp)).background(Color(0x8C5A5A5A))) {
         Box(Modifier.fillMaxHeight().fillMaxWidth(fraction.coerceIn(0f, 1f)).background(C.Red))
     }
 }
@@ -214,6 +214,7 @@ fun PosterCard(
     expandable: Boolean = false,
     /** Show the IMDb score in the corner (catalog rows). */
     showRating: Boolean = false,
+    onFocusChange: (Boolean) -> Unit = {},
     onClick: () -> Unit,
 ) {
     val baseW = if (shape == CardShape.POSTER) width else shape.width
@@ -240,7 +241,7 @@ fun PosterCard(
         focusedScale = if (canExpand) 1.05f else 1.08f,
         focusRequester = focusRequester,
         onFocus = onFocus,
-        onFocusChange = { focused = it; if (!it) expanded = false },
+        onFocusChange = { focused = it; if (!it) expanded = false; onFocusChange(it) },
         onLongClick = onLongClick,
         onClick = onClick,
     ) {
@@ -294,8 +295,8 @@ fun PosterCard(
             if (topRank != null) TopBadge(Modifier.align(Alignment.TopEnd))
             if (ribbon != null && item.progress == null) Ribbon(ribbon, Modifier.align(Alignment.BottomCenter))
         }
-        item.progress?.let {
-            ProgressLine(it, Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(8.dp))
+        if (!open) item.progress?.let {
+            ProgressLine(it, Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp))
         }
     }
 }
@@ -326,6 +327,18 @@ private fun ExpandedPreview(item: CardItem, modifier: Modifier) {
             )
             Text(facts.joinToString("  ·  "), color = Color(0xFFE6E6E6), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             item.badge?.let { Text(it, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
+            // One line of what it's about.
+            m.description?.takeIf { it.isNotBlank() && item.badge == null }?.let {
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    it, color = Color(0xFFBDBDBD), fontSize = 11.sp, lineHeight = 14.sp,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.92f),
+                )
+            }
+            item.progress?.let {
+                Spacer(Modifier.height(6.dp))
+                ProgressLine(it, Modifier.fillMaxWidth(0.6f))
+            }
         }
     }
 }
@@ -368,21 +381,21 @@ fun Top10Card(
     onClick: () -> Unit,
 ) {
     val h = CardShape.POSTER.width / CardShape.POSTER.aspect
+    var focused by remember { mutableStateOf(false) }
+    val glow by androidx.compose.animation.animateColorAsState(
+        if (focused) Color(0xFFE5E5E5) else Color(0xFF7A7A7A), tween(180), label = "rank",
+    )
     Row(verticalAlignment = Alignment.Bottom) {
-        Box(Modifier.height(h).width(if (rank >= 10) 112.dp else 70.dp), contentAlignment = Alignment.BottomEnd) {
+        Box(Modifier.height(h).width(if (rank >= 10) 120.dp else 76.dp), contentAlignment = Alignment.BottomEnd) {
+            val digits = rank.toString()
+            val base = TextStyle(fontSize = 150.sp, lineHeight = 150.sp, fontWeight = FontWeight.Black, letterSpacing = (-8).sp)
+            val m = Modifier.offset(x = 16.dp, y = 22.dp)
+            // Dark fill, then a light outline over it (Netflix's look), brighter on the focused one.
             Text(
-                rank.toString(),
-                style = TextStyle(
-                    color = Color(0xFF6B6B6B),
-                    fontSize = 132.sp,
-                    lineHeight = 132.sp,
-                    fontWeight = FontWeight.Black,
-                    letterSpacing = (-6).sp,
-                    drawStyle = Stroke(width = 5f),
-                ),
-                maxLines = 1,
-                modifier = Modifier.offset(x = 14.dp, y = 14.dp),
+                digits, maxLines = 1, modifier = m,
+                style = base.copy(brush = Brush.verticalGradient(listOf(Color(0xFF2B2B2B), Color(0xFF0E0E0E)))),
             )
+            Text(digits, maxLines = 1, modifier = m, style = base.copy(color = glow, drawStyle = Stroke(width = 6f)))
         }
         PosterCard(
             item = item,
@@ -390,6 +403,7 @@ fun Top10Card(
             focusRequester = focusRequester,
             onFocus = onFocus,
             onLongClick = onLongClick,
+            onFocusChange = { focused = it },
             onClick = onClick,
         )
     }

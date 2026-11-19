@@ -547,7 +547,7 @@ fun CatalogRow(
                         if (row.source is RowSource.Top10) {
                             Top10Card(
                                 rank = i + 1,
-                                item = item,
+                                item = model.progressByMeta[item.meta.id]?.let { item.copy(progress = it) } ?: item,
                                 focusRequester = fr,
                                 onFocus = { model.onCardFocus(b, key, item) },
                                 onLongClick = { model.openCardMenu(b, item, false, row.title) },
@@ -556,8 +556,12 @@ fun CatalogRow(
                             return@itemsIndexed
                         }
                         val plainRow = row.source !is RowSource.Continue && row.source !is RowSource.NewEpisodes
+                        // Started titles show how far you got, in every row.
+                        val shownItem = if (plainRow && item.progress == null) {
+                            model.progressByMeta[item.meta.id]?.let { item.copy(progress = it) } ?: item
+                        } else item
                         PosterCard(
-                            item = item,
+                            item = shownItem,
                             width = CARD_W,
                             ribbon = if (plainRow) model.ribbonFor(item.meta) else null,
                             topRank = model.top10[item.meta.id],

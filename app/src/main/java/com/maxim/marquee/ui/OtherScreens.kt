@@ -250,9 +250,6 @@ fun StreamsScreen(model: AppModel, s: Screen.Streams) {
 }
 
 private const val SOURCES_PER_GROUP = 3
-private val RES_SUB = mapOf("4K" to "Ultra HD", "1440p" to null, "1080p" to "Full HD", "720p" to "HD", "SD" to null)
-private val HDR_NAMES = mapOf("DV" to "Dolby Vision", "HDR" to "HDR", "HDR10" to "HDR10", "HDR10+" to "HDR10+", "HLG" to "HLG")
-private val SOUND = setOf("Atmos", "TrueHD", "DTS-HD", "DTS", "DD+", "DD", "AAC", "7.1", "5.1", "2.0")
 
 /**
  * One source. Top line: what it is (Blu-ray Remux, WEB…), the cut (IMAX, Extended), picture and
@@ -261,12 +258,7 @@ private val SOUND = setOf("Atmos", "TrueHD", "DTS-HD", "DTS", "DD+", "DD", "AAC"
 @Composable
 private fun SourceRow(st: StreamItem, isBest: Boolean, fr: FocusRequester?, onClick: () -> Unit) {
     val SG = com.maxim.marquee.data.SourceGroups
-    val kind = remember(st) { SG.kind(st) }
-    val tags = remember(st) { SG.tags(st) }
-    val codec = remember(st) { SG.codec(st) }
     val size = remember(st) { st.quality.sizeMb?.let { com.maxim.marquee.data.Quality.sizeLabel(it) } }
-    // (size is shown on its own; "REMUX" is already in the kind)
-    val badges = remember(st) { st.quality.badges.filterNot { it == "REMUX" || it.endsWith(" GB") || it.endsWith(" MB") || it == "AV1" } }
     val file = remember(st) { (st.fileName ?: st.title.lineSequence().firstOrNull { it.isNotBlank() } ?: st.name).trim() }
     val from = remember(st) { st.name.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: "" }
     // Focus the way episodes show it: the row lifts with a white outline.
@@ -299,30 +291,7 @@ private fun SourceRow(st: StreamItem, isBest: Boolean, fr: FocusRequester?, onCl
                                 .wrapContentHeight(Alignment.CenterVertically),
                         )
                     }
-                    // Where it comes from.
-                    when {
-                        st.embyId != null -> QualityBadge("Your copy", BadgeGlyph.SERVER, BadgeTone.BRIGHT)
-                        kind == "Blu-ray Remux" -> QualityBadge("Blu-ray", BadgeGlyph.DISC, BadgeTone.BRIGHT, sub = "Remux")
-                        kind == "Blu-ray" -> QualityBadge("Blu-ray", BadgeGlyph.DISC)
-                        kind == "WEB" -> QualityBadge("Web", BadgeGlyph.GLOBE)
-                        kind == "TV recording" -> QualityBadge("TV", BadgeGlyph.ANTENNA)
-                        kind == "Cinema recording" -> QualityBadge("Cinema cam", BadgeGlyph.CAMERA)
-                        else -> Unit
-                    }
-                    // Which cut.
-                    tags.forEach { t -> QualityBadge(t, if (t == "IMAX" || t == "Open Matte") BadgeGlyph.FRAME else BadgeGlyph.FILM, BadgeTone.GOLD) }
-                    // Picture: size, then HDR kinds together.
-                    badges.firstOrNull { it in RES_SUB }?.let {
-                        QualityBadge(it, BadgeGlyph.SCREEN, if (it == "4K") BadgeTone.BRIGHT else BadgeTone.PLAIN, caps = false)
-                    }
-                    badges.filter { it in HDR_NAMES }.takeIf { it.isNotEmpty() }?.let { l ->
-                        QualityBadge(if (l.size == 1) HDR_NAMES.getValue(l[0]) else l.joinToString(" · "), BadgeGlyph.SUN, BadgeTone.BRIGHT)
-                    }
-                    // Sound: format and speakers in one.
-                    badges.filter { it in SOUND }.takeIf { it.isNotEmpty() }?.let { l ->
-                        QualityBadge(l.joinToString(" "), BadgeGlyph.SPEAKER, if ("Atmos" in l || "TrueHD" in l || "DTS-HD" in l) BadgeTone.BRIGHT else BadgeTone.PLAIN)
-                    }
-                    codec?.let { QualityBadge(it, BadgeGlyph.CHIP) }
+                    SourceBadges(st)
                 }
                 Text(
                     file, color = if (hasFocus) Color(0xFFD0D0D0) else Color(0xFF9A9A9A), fontSize = 12.sp,
@@ -643,160 +612,217 @@ fun SettingsScreen(model: AppModel) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState())
             .padding(start = RAIL + 24.dp, end = 120.dp, top = 36.dp, bottom = 80.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(26.dp),
     ) {
-        Text("Settings", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 10.dp))
-        SettingRow(
-            "Profile", Store.activeProfile.name,
-            "Each profile has its own Stremio account, Continue Watching, My List and settings · select to switch or add",
-            firstFr,
-        ) { model.openProfiles() }
-        model.copySources().forEach { p ->
-            SettingRow("Copy addons from ${p.name}", "", "Replaces this account's Stremio addons with ${p.name}'s") { model.offerCopyFrom = p }
-        }
-        SettingRow("Play the best source automatically", onOff(Store.autoplay), "Off shows the source list every time") {
-            Store.autoplay = !Store.autoplay; version++
-        }
-        SettingRow("Autoplay next episode", onOff(Store.autoNext)) { Store.autoNext = !Store.autoNext; version++ }
-        SettingRow("Sync progress to Stremio", onOff(Store.syncProgress), "Keeps Continue Watching in step with your other devices") {
-            Store.syncProgress = !Store.syncProgress; version++
-        }
-        SettingRow("Subtitles on by default", onOff(Store.subsOn), "You can always toggle them with CC in the player") {
-            Store.subsOn = !Store.subsOn; version++
-        }
-        SettingRow("Subtitle language", langName) {
-            val langs = Store.subtitleLanguages
-            val i = langs.indexOfFirst { it.first == Store.subLang }
-            Store.subLang = langs[(i + 1) % langs.size].first; version++
-        }
-        SettingRow(
-            "Max quality",
-            when (Store.maxQuality) { 2160 -> "4K"; 1080 -> "1080p"; 720 -> "720p"; else -> "Best available" },
-            "Caps the source picked automatically; lower it if your connection or box struggles",
-        ) {
-            val opts = listOf(0, 2160, 1080, 720)
-            Store.maxQuality = opts[(opts.indexOf(Store.maxQuality).coerceAtLeast(0) + 1) % opts.size]; version++
-        }
-        SettingRow(
-            "Trailers on the home screen",
-            when (Store.trailerMode) { 0 -> "Off"; 2 -> "With sound"; else -> "Muted" },
-            "Plays the trailer behind the billboard when you rest on a title",
-        ) {
-            Store.trailerMode = (Store.trailerMode + 1) % 3; version++
-        }
-        val hiddenCount = Store.hiddenRows.size
-        if (hiddenCount > 0) {
-            SettingRow("Hidden rows", "$hiddenCount hidden", "Select to show them all again") { model.showHiddenRows(); version++ }
-        }
-        SettingRow("Sports recaps & highlights", if (Store.showRecaps) "Shown" else "Hidden", "Replays of past games in your sports rows") {
-            model.setShowRecaps(!Store.showRecaps); version++
-        }
-        val act = LocalContext.current as? android.app.Activity
-        SettingRow(
-            "Performance overlay", onOff(com.maxim.marquee.PerfMonitor.enabled),
-            "Shows how fast the TV draws each frame, in the corner. For tracking down stutter",
-        ) {
-            act?.let { com.maxim.marquee.PerfMonitor.setEnabled(it, !com.maxim.marquee.PerfMonitor.enabled) }; version++
-        }
-        SettingRow("Expanding cards", onOff(Store.expandCards), "Posters widen into a preview when you rest on them") {
-            Store.expandCards = !Store.expandCards; version++
-        }
-        SettingRow("Skip intros automatically", onOff(Store.autoSkipIntro), "Otherwise a Skip Intro button appears (IntroDB data)") {
-            Store.autoSkipIntro = !Store.autoSkipIntro; version++
-        }
-        SettingRow(
-            "Audio passthrough", if (Store.passthrough) "Auto" else "Off",
-            "Auto sends Dolby / DTS straight to your TV or soundbar. Off decodes it here (try this if you get silence or crackling)",
-        ) { Store.passthrough = !Store.passthrough; version++ }
-        SettingRow(
-            "DTS & TrueHD audio", if (Store.convertDts) "Convert here" else "Pass through if supported",
-            "Convert plays them as surround sound on any TV. Pass through sends them untouched (lossless, DTS:X / Atmos) to a receiver that supports them",
-        ) { Store.convertDts = !Store.convertDts; version++ }
-        SettingRow(
-            "Surround sound", if (Store.stereoDownmix) "Stereo (TV speakers)" else "Keep all channels",
-            "Stereo folds 5.1 / 7.1 into two channels with full-level voices (louder on a TV). Keep all channels for a receiver",
-        ) { Store.stereoDownmix = !Store.stereoDownmix; version++ }
-        SettingRow("Night mode", onOff(Store.nightMode), "Evens out loud and quiet scenes and lifts voices · also in the player's audio menu") {
-            Store.nightMode = !Store.nightMode; version++
-        }
-        SettingRow("Match frame rate", onOff(Store.matchFrameRate), "Switches the TV to 24p/25p/etc. for smoother motion") {
-            Store.matchFrameRate = !Store.matchFrameRate; version++
-        }
-        SettingRow("Subtitle size", listOf("Small", "Medium", "Large", "Extra large")[Store.subSize.coerceIn(0, 3)]) {
-            Store.subSize = (Store.subSize + 1) % 4; version++
-        }
-        SettingRow("Subtitle style", if (Store.subStyle == 1) "On a dark box" else "White with shadow") {
-            Store.subStyle = (Store.subStyle + 1) % 2; version++
-        }
-        SettingRow("Player", if (Store.externalPlayer) "External app" else "Built-in", "External sends videos to VLC, Just Player, MX Player…") {
-            Store.externalPlayer = !Store.externalPlayer; version++
-        }
-        SettingRow("Reload addons", if (model.syncing) "Loading…" else "${model.addonCount} installed", "Pick up changes made in Stremio") {
-            scope.launch { model.start() }
-        }
-        if (com.maxim.marquee.data.Emby.connected) {
+        Text("Settings", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        SettingsGroup("Account", "Who's watching and how you sign in") {
             SettingRow(
-                "Emby server",
-                "Connected · ${Store.embyUserName ?: ""}",
-                (Store.embyServer ?: "") + " — select to disconnect",
-            ) { model.embySignOut(); version++ }
-            SettingRow(
-                "Emby rows",
-                when (Store.embyRows) { 1 -> "Series & Movies tabs"; 2 -> "Everywhere"; else -> "Off" },
-                "\"New in …\" rows from your server. Its titles are always in Continue Watching, search and sources",
-            ) { model.setEmbyRows((Store.embyRows + 1) % 3); version++ }
-        } else {
-            SettingRow("Emby server", "Not connected", "Add your Emby (or Jellyfin) server to see its shows here") {
-                model.stack.add(com.maxim.marquee.Screen.EmbyLogin)
+                "Profile", Store.activeProfile.name,
+                "Each profile has its own Stremio account, Continue Watching, My List and settings · select to switch or add",
+                firstFr,
+            ) { model.openProfiles() }
+            model.copySources().forEach { p ->
+                SettingRow("Copy addons from ${p.name}", "", "Replaces this account's Stremio addons with ${p.name}'s") { model.offerCopyFrom = p }
             }
-        }
-        SettingRow(
-            "Update automatically",
-            onOff(Store.autoUpdate),
-            "Checks every time you open Marquee · installed: build ${com.maxim.marquee.Updater.currentBuild(LocalContext.current)}",
-        ) { Store.autoUpdate = !Store.autoUpdate; version++ }
-        SettingRow("Check for updates now", "") { model.checkForUpdate(manual = true) }
-        SettingRow("Set up from your phone", "", "Scan a QR code to sign in to Stremio, Emby, Trakt and TMDB without the remote") {
-            model.stack.add(com.maxim.marquee.Screen.PhoneSetup)
-        }
-        val trakt = com.maxim.marquee.data.Trakt
-        when {
-            trakt.connected -> SettingRow("Trakt", "Connected", "Scrobbling, watchlist and recommendations · select to disconnect") {
-                model.traktSignOut(); version++
-            }
-            trakt.hasKeys -> SettingRow("Trakt", "Not connected", "Select to approve Marquee on trakt.tv") {
-                model.stack.add(com.maxim.marquee.Screen.TraktActivate)
-            }
-            else -> SettingRow("Trakt", "Not set up", "Add your Trakt keys with \"Set up from your phone\"") {
+            SettingRow("Set up from your phone", "", "Scan a QR code to sign in to Stremio, Emby, Trakt and TMDB without the remote") {
                 model.stack.add(com.maxim.marquee.Screen.PhoneSetup)
             }
+            SettingRow("Signed in as", Store.email ?: "", "Select to sign out") { model.signOut() }
         }
-        SettingRow(
-            "TMDB key", if (com.maxim.marquee.data.Tmdb.configured) "Saved" else "Not set",
-            "Enables movie collections on detail pages",
-        ) { model.stack.add(com.maxim.marquee.Screen.PhoneSetup) }
-        SettingRow("Signed in as", Store.email ?: "", "Select to sign out") { model.signOut() }
+        SettingsGroup("Playback", "How titles start, at what quality, and what comes next") {
+            SettingRow("Play the best source automatically", onOff(Store.autoplay), "Off shows the source list every time") {
+                Store.autoplay = !Store.autoplay; version++
+            }
+            SettingRow(
+                "Max quality",
+                when (Store.maxQuality) { 2160 -> "4K"; 1080 -> "1080p"; 720 -> "720p"; else -> "Best available" },
+                "Caps the source picked automatically; lower it if your connection or box struggles",
+            ) {
+                val opts = listOf(0, 2160, 1080, 720)
+                Store.maxQuality = opts[(opts.indexOf(Store.maxQuality).coerceAtLeast(0) + 1) % opts.size]; version++
+            }
+            SettingRow("Autoplay next episode", onOff(Store.autoNext)) { Store.autoNext = !Store.autoNext; version++ }
+            SettingRow("Skip intros automatically", onOff(Store.autoSkipIntro), "Otherwise a Skip Intro button appears (IntroDB data)") {
+                Store.autoSkipIntro = !Store.autoSkipIntro; version++
+            }
+            SettingRow("Match frame rate", onOff(Store.matchFrameRate), "Switches the TV to 24p/25p/etc. for smoother motion") {
+                Store.matchFrameRate = !Store.matchFrameRate; version++
+            }
+            SettingRow("Sync progress to Stremio", onOff(Store.syncProgress), "Keeps Continue Watching in step with your other devices") {
+                Store.syncProgress = !Store.syncProgress; version++
+            }
+            SettingRow("Player", if (Store.externalPlayer) "External app" else "Built-in", "External sends videos to VLC, Just Player, MX Player…") {
+                Store.externalPlayer = !Store.externalPlayer; version++
+            }
+        }
+        SettingsGroup("Sound", "For TV speakers, a soundbar or a receiver") {
+            SettingRow(
+                "Audio passthrough", if (Store.passthrough) "Auto" else "Off",
+                "Auto sends Dolby / DTS straight to your TV or soundbar. Off decodes it here (try this if you get silence or crackling)",
+            ) { Store.passthrough = !Store.passthrough; version++ }
+            SettingRow(
+                "DTS & TrueHD audio", if (Store.convertDts) "Convert here" else "Pass through if supported",
+                "Convert plays them as surround sound on any TV. Pass through sends them untouched (lossless, DTS:X / Atmos) to a receiver that supports them",
+            ) { Store.convertDts = !Store.convertDts; version++ }
+            SettingRow(
+                "Surround sound", if (Store.stereoDownmix) "Stereo (TV speakers)" else "Keep all channels",
+                "Stereo folds 5.1 / 7.1 into two channels with full-level voices (louder on a TV). Keep all channels for a receiver",
+            ) { Store.stereoDownmix = !Store.stereoDownmix; version++ }
+            SettingRow("Night mode", onOff(Store.nightMode), "Evens out loud and quiet scenes and lifts voices · also in the player's audio menu") {
+                Store.nightMode = !Store.nightMode; version++
+            }
+        }
+        SettingsGroup("Subtitles", "Language, size and look") {
+            SettingRow("Subtitles on by default", onOff(Store.subsOn), "You can always toggle them with CC in the player") {
+                Store.subsOn = !Store.subsOn; version++
+            }
+            SettingRow("Subtitle language", langName) {
+                val langs = Store.subtitleLanguages
+                val i = langs.indexOfFirst { it.first == Store.subLang }
+                Store.subLang = langs[(i + 1) % langs.size].first; version++
+            }
+            SettingRow("Subtitle size", listOf("Small", "Medium", "Large", "Extra large")[Store.subSize.coerceIn(0, 3)]) {
+                Store.subSize = (Store.subSize + 1) % 4; version++
+            }
+            SettingRow("Subtitle style", if (Store.subStyle == 1) "On a dark box" else "White with shadow") {
+                Store.subStyle = (Store.subStyle + 1) % 2; version++
+            }
+        }
+        SettingsGroup("Home screen", "What it shows and how it moves") {
+            SettingRow(
+                "Trailers on the home screen",
+                when (Store.trailerMode) { 0 -> "Off"; 2 -> "With sound"; else -> "Muted" },
+                "Plays the trailer behind the billboard when you rest on a title",
+            ) {
+                Store.trailerMode = (Store.trailerMode + 1) % 3; version++
+            }
+            SettingRow("Expanding cards", onOff(Store.expandCards), "Posters widen into a preview when you rest on them") {
+                Store.expandCards = !Store.expandCards; version++
+            }
+            SettingRow("Sports recaps & highlights", if (Store.showRecaps) "Shown" else "Hidden", "Replays of past games in your sports rows") {
+                model.setShowRecaps(!Store.showRecaps); version++
+            }
+            val hiddenCount = Store.hiddenRows.size
+            if (hiddenCount > 0) {
+                SettingRow("Hidden rows", "$hiddenCount hidden", "Select to show them all again") { model.showHiddenRows(); version++ }
+            }
+        }
+        SettingsGroup("Services", "Your server, Trakt, TMDB and Stremio addons") {
+            if (com.maxim.marquee.data.Emby.connected) {
+                SettingRow(
+                    "Emby server",
+                    "Connected · ${Store.embyUserName ?: ""}",
+                    (Store.embyServer ?: "") + " — select to disconnect",
+                ) { model.embySignOut(); version++ }
+                SettingRow(
+                    "Emby rows",
+                    when (Store.embyRows) { 1 -> "Series & Movies tabs"; 2 -> "Everywhere"; else -> "Off" },
+                    "\"New in …\" rows from your server. Its titles are always in Continue Watching, search and sources",
+                ) { model.setEmbyRows((Store.embyRows + 1) % 3); version++ }
+            } else {
+                SettingRow("Emby server", "Not connected", "Add your Emby (or Jellyfin) server to see its shows here") {
+                    model.stack.add(com.maxim.marquee.Screen.EmbyLogin)
+                }
+            }
+            val trakt = com.maxim.marquee.data.Trakt
+            when {
+                trakt.connected -> SettingRow("Trakt", "Connected", "Scrobbling, watchlist and recommendations · select to disconnect") {
+                    model.traktSignOut(); version++
+                }
+                trakt.hasKeys -> SettingRow("Trakt", "Not connected", "Select to approve Marquee on trakt.tv") {
+                    model.stack.add(com.maxim.marquee.Screen.TraktActivate)
+                }
+                else -> SettingRow("Trakt", "Not set up", "Add your Trakt keys with \"Set up from your phone\"") {
+                    model.stack.add(com.maxim.marquee.Screen.PhoneSetup)
+                }
+            }
+            SettingRow(
+                "TMDB key", if (com.maxim.marquee.data.Tmdb.configured) "Saved" else "Not set",
+                "Enables movie collections on detail pages",
+            ) { model.stack.add(com.maxim.marquee.Screen.PhoneSetup) }
+            SettingRow("Reload addons", if (model.syncing) "Loading…" else "${model.addonCount} installed", "Pick up changes made in Stremio") {
+                scope.launch { model.start() }
+            }
+        }
+        SettingsGroup("App", "Updates and diagnostics") {
+            SettingRow(
+                "Update automatically",
+                onOff(Store.autoUpdate),
+                "Checks every time you open Marquee · installed: build ${com.maxim.marquee.Updater.currentBuild(LocalContext.current)}",
+            ) { Store.autoUpdate = !Store.autoUpdate; version++ }
+            SettingRow("Check for updates now", "") { model.checkForUpdate(manual = true) }
+            val act = LocalContext.current as? android.app.Activity
+            SettingRow(
+                "Performance overlay", onOff(com.maxim.marquee.PerfMonitor.enabled),
+                "Shows how fast the TV draws each frame, in the corner. For tracking down stutter",
+            ) {
+                act?.let { com.maxim.marquee.PerfMonitor.setEnabled(it, !com.maxim.marquee.PerfMonitor.enabled) }; version++
+            }
+        }
         Text(
             "Addons: " + Repo.addons.joinToString(", ") { it.name },
-            color = C.Dim, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 12.dp),
+            color = C.Dim, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(start = 4.dp),
         )
+    }
+}
+
+/** A titled group of settings in one rounded card. */
+@Composable
+private fun SettingsGroup(title: String, description: String, content: @Composable () -> Unit) {
+    Column {
+        Row(Modifier.padding(start = 4.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.width(3.dp).height(18.dp).background(C.Red, RoundedCornerShape(2.dp)))
+            Spacer(Modifier.width(10.dp))
+            Text(title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.width(12.dp))
+            Text(description, color = Color(0xFF8C8C8C), fontSize = 13.sp)
+        }
+        Column(
+            Modifier.fillMaxWidth()
+                .background(Color(0x14FFFFFF), RoundedCornerShape(14.dp))
+                .border(1.dp, Color(0x1AFFFFFF), RoundedCornerShape(14.dp))
+                .padding(6.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) { content() }
     }
 }
 
 @Composable
 private fun SettingRow(title: String, value: String, hint: String? = null, fr: FocusRequester? = null, onClick: () -> Unit) {
-    Tile(modifier = Modifier.fillMaxWidth(), focusedScale = 1.01f, border = false, focusRequester = fr, onClick = onClick) { f ->
+    Tile(
+        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp),
+        focusedScale = 1.01f, border = false, focusRequester = fr, onClick = onClick,
+    ) { f ->
         Row(
-            Modifier.fillMaxWidth().background(if (f) Color.White else Color(0x1AFFFFFF)).padding(horizontal = 20.dp, vertical = 14.dp),
+            Modifier.fillMaxWidth().background(if (f) Color.White else Color.Transparent).padding(horizontal = 18.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Text(title, color = if (f) Color.Black else Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-                hint?.let { Text(it, color = if (f) Color(0xFF444444) else C.Dim, fontSize = 13.sp) }
+                Text(title, color = if (f) Color.Black else Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                hint?.let { Text(it, color = if (f) Color(0xFF555555) else Color(0xFF9A9A9A), fontSize = 12.sp, lineHeight = 16.sp) }
             }
-            Text(value, color = if (f) Color.Black else C.Dim, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.width(16.dp))
+            if (value == "On" || value == "Off") {
+                SettingSwitch(value == "On", f)
+            } else if (value.isNotEmpty()) {
+                Text(value, color = if (f) Color.Black else Color(0xFFCFCFCF), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text("  ›", color = if (f) Color(0xFF555555) else Color(0xFF6A6A6A), fontSize = 18.sp)
+            } else {
+                Text("›", color = if (f) Color(0xFF555555) else Color(0xFF6A6A6A), fontSize = 18.sp)
+            }
         }
     }
+}
+
+/** On/off as a switch: red track with the dot to the right when on. */
+@Composable
+private fun SettingSwitch(on: Boolean, focused: Boolean) {
+    Box(
+        Modifier.width(44.dp).height(24.dp)
+            .background(if (on) C.Red else if (focused) Color(0xFFBDBDBD) else Color(0x40FFFFFF), RoundedCornerShape(12.dp))
+            .padding(3.dp),
+        contentAlignment = if (on) Alignment.CenterEnd else Alignment.CenterStart,
+    ) { Box(Modifier.size(18.dp).background(Color.White, RoundedCornerShape(9.dp))) }
 }
 
 // ---------------------------------------------------------------- update banner

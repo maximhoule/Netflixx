@@ -6,6 +6,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.focusable
@@ -526,8 +527,12 @@ private fun SeekBar(host: PlayerHost, ui: PlayerUiState, modifier: Modifier) {
             .focusable(),
         contentAlignment = Alignment.CenterStart,
     ) {
-        val barH by androidx.compose.animation.core.animateDpAsState(if (focused) 6.dp else 3.dp, tween(140), label = "bar")
-        BoxWithConstraints(Modifier.fillMaxWidth().height(barH).clip(RoundedCornerShape(3.dp)).background(Color(0x40FFFFFF))) {
+        // Thickens when selected (drawn bigger, not laid out again, so it costs nothing).
+        val barScale by androidx.compose.animation.core.animateFloatAsState(if (focused) 1f else 0.5f, tween(140), label = "bar")
+        BoxWithConstraints(
+            Modifier.fillMaxWidth().height(6.dp).graphicsLayer { scaleY = barScale }
+                .clip(RoundedCornerShape(3.dp)).background(Color(0x40FFFFFF)),
+        ) {
             val w = maxWidth
             Box(Modifier.fillMaxHeight().fillMaxWidth(buf).background(Color(0x59FFFFFF)))
             // Intro / recap / credits: lighter stretches, so you can see what you'd skip.

@@ -51,6 +51,8 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.input.key.Key
@@ -382,20 +384,9 @@ fun Top10Card(
 ) {
     val h = CardShape.POSTER.width / CardShape.POSTER.aspect
     var focused by remember { mutableStateOf(false) }
-    val glow by androidx.compose.animation.animateColorAsState(
-        if (focused) Color(0xFFE5E5E5) else Color(0xFF7A7A7A), tween(180), label = "rank",
-    )
     Row(verticalAlignment = Alignment.Bottom) {
         Box(Modifier.height(h).width(if (rank >= 10) 120.dp else 76.dp), contentAlignment = Alignment.BottomEnd) {
-            val digits = rank.toString()
-            val base = TextStyle(fontSize = 150.sp, lineHeight = 150.sp, fontWeight = FontWeight.Black, letterSpacing = (-8).sp)
-            val m = Modifier.offset(x = 16.dp, y = 22.dp)
-            // Dark fill, then a light outline over it (Netflix's look), brighter on the focused one.
-            Text(
-                digits, maxLines = 1, modifier = m,
-                style = base.copy(brush = Brush.verticalGradient(listOf(Color(0xFF2B2B2B), Color(0xFF0E0E0E)))),
-            )
-            Text(digits, maxLines = 1, modifier = m, style = base.copy(color = glow, drawStyle = Stroke(width = 6f)))
+            RankNumeral(rank, focused, Modifier.offset(x = 16.dp, y = 22.dp))
         }
         PosterCard(
             item = item,
@@ -407,6 +398,46 @@ fun Top10Card(
             onClick = onClick,
         )
     }
+}
+
+/**
+ * The big Top 10 number, drawn once into a picture and reused: text this large can't be cached
+ * by the graphics chip, so as live text it was redrawn from scratch on every frame of a scroll.
+ */
+private val rankPictures = HashMap<String, ImageBitmap>()
+
+@Composable
+private fun RankNumeral(rank: Int, focused: Boolean, modifier: Modifier) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val px = with(androidx.compose.ui.platform.LocalDensity.current) { 150.sp.toPx() }
+    val img = remember(rank, focused, px) {
+        rankPictures.getOrPut("$rank|$focused|$px") { drawRank(ctx, rank.toString(), px, focused) }
+    }
+    androidx.compose.foundation.Image(img, null, modifier)
+}
+
+private fun drawRank(ctx: android.content.Context, digits: String, size: Float, focused: Boolean): ImageBitmap {
+    val face = runCatching { androidx.core.content.res.ResourcesCompat.getFont(ctx, com.maxim.marquee.R.font.inter_800) }.getOrNull()
+        ?: android.graphics.Typeface.DEFAULT_BOLD
+    val stroke = size / 25f
+    val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = face; textSize = size; letterSpacing = -0.053f
+    }
+    val fm = p.fontMetrics
+    val w = (p.measureText(digits) + stroke * 2).toInt().coerceAtLeast(1)
+    val hgt = (fm.descent - fm.ascent + stroke * 2).toInt().coerceAtLeast(1)
+    val bmp = android.graphics.Bitmap.createBitmap(w, hgt, android.graphics.Bitmap.Config.ARGB_8888)
+    val c = android.graphics.Canvas(bmp)
+    val baseline = stroke - fm.ascent
+    // Dark fill, then a light outline over it (Netflix's look), brighter on the focused one.
+    p.shader = android.graphics.LinearGradient(0f, 0f, 0f, hgt.toFloat(), 0xFF2B2B2B.toInt(), 0xFF0E0E0E.toInt(), android.graphics.Shader.TileMode.CLAMP)
+    c.drawText(digits, stroke, baseline, p)
+    p.shader = null
+    p.style = android.graphics.Paint.Style.STROKE
+    p.strokeWidth = stroke
+    p.color = if (focused) 0xFFE5E5E5.toInt() else 0xFF7A7A7A.toInt()
+    c.drawText(digits, stroke, baseline, p)
+    return bmp.asImageBitmap()
 }
 
 fun seasonsLabel(n: Int) = if (n == 1) "1 Season" else "$n Seasons"

@@ -782,7 +782,7 @@ private fun PosterGrid(model: AppModel, items: List<MetaItem>, entry: EntryPoint
         items(items.size, key = { items[it].id }) { i ->
             val m = items[i]
             PosterCard(
-                item = CardItem(m), width = 108.dp, topRank = model.top10[m.id], showRating = true,
+                item = CardItem(m), width = 108.dp, topRank = model.top10[m.id], showRating = false,
                 focusRequester = if (i == 0) firstFr else null,
                 onClick = { model.openDetail(m) },
             )

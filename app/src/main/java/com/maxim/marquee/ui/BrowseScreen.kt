@@ -566,7 +566,7 @@ fun CatalogRow(
                             ribbon = if (plainRow) model.ribbonFor(item.meta) else null,
                             topRank = model.top10[item.meta.id],
                             expandable = expandCards,
-                            showRating = plainRow,
+                            showRating = false, // (no IMDb badge on posters: rating is on the billboard)
                             shape = rowShape,
                             onImageAspect = if (declared == null && detected == null && i < 3) {
                                 { a -> detected = CardShape.forAspect(a) }
@@ -665,7 +665,7 @@ fun SeeAllScreen(model: AppModel, screen: com.maxim.marquee.Screen.SeeAll) {
                     width = CARD_W,
                     shape = shape,
                     ribbon = if (plain) model.ribbonFor(item.meta) else null,
-                    showRating = plain,
+                    showRating = false,
                     focusRequester = fr,
                     onFocus = {
                         screen.focus = i

@@ -764,19 +764,30 @@ private fun TooHeavyCard(host: PlayerHost, needMbps: Int, haveMbps: Int, modifie
     Column(
         modifier.width(560.dp).background(Color(0xF0141414), RoundedCornerShape(12.dp)).padding(24.dp),
     ) {
-        Text("This copy is too heavy for your connection", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        // Your connection is plenty for it: the source itself is slow, not too big.
+        val sourceSlow = needMbps > 0 && haveMbps > 0 && haveMbps >= needMbps * 2
+        Text(
+            if (sourceSlow) "This source keeps stopping to load" else "This copy is too heavy for your connection",
+            color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold,
+        )
         Spacer(Modifier.height(8.dp))
         Text(
-            if (needMbps > 0 && haveMbps > 0) "It needs about $needMbps Mbps; your TV is getting about $haveMbps Mbps, so it keeps stopping to load."
-            else "It keeps stopping to load: the file is bigger than your connection can keep up with.",
+            when {
+                sourceSlow -> "Your connection is fine (about $haveMbps Mbps; this needs about $needMbps). The source is slow to send it — another one will likely play smoothly."
+                needMbps > 0 && haveMbps > 0 -> "It needs about $needMbps Mbps; your TV is getting about $haveMbps Mbps, so it keeps stopping to load."
+                else -> "It keeps stopping to load: the source can't keep up."
+            },
             color = C.Dim, fontSize = 15.sp, lineHeight = 21.sp,
         )
         Spacer(Modifier.height(18.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            ActionButton(text = "Switch to a lighter copy", icon = PlayerIcons.Play, focusRequester = fr, onClick = { host.switchLighter() })
+            ActionButton(
+                text = if (sourceSlow) "Try another source" else "Switch to a lighter copy",
+                icon = PlayerIcons.Play, focusRequester = fr, onClick = { host.switchLighter() },
+            )
             ActionButton(text = "Keep this one", onClick = { host.keepHeavy() })
         }
         Spacer(Modifier.height(10.dp))
-        Text("Keep this one waits for a longer buffer (about a minute) before carrying on.", color = Color(0xFF8A8A8A), fontSize = 12.sp)
+        Text("Keep this one (or Back) waits for a longer buffer, about a minute, then carries on.", color = Color(0xFF8A8A8A), fontSize = 12.sp)
     }
 }

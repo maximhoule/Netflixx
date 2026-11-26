@@ -831,6 +831,15 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
             }
         }
 
+        // The "keeps stopping" card: the remote moves between its buttons; Back = keep this one.
+        if (ui.tooHeavy != null) {
+            if (down && code == KeyEvent.KEYCODE_BACK) {
+                keepHeavy()
+                return consume()
+            }
+            return super.dispatchKeyEvent(event)
+        }
+
         // An open panel: Back closes it, everything else navigates the panel.
         if (ui.panel != Panel.NONE) {
             if (down && code == KeyEvent.KEYCODE_BACK) {
@@ -1304,10 +1313,14 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
         val now = System.currentTimeMillis()
         stallTimes.addLast(now)
         while (stallTimes.isNotEmpty() && now - stallTimes.first() > 4 * 60_000) stallTimes.removeFirst()
+        // Live: there's nothing ahead to load, so waiting for a long buffer only makes it worse,
+        // and it can't be swapped for a "lighter copy". It just carries on.
+        if (player.isCurrentMediaItemLive || player.duration == C.TIME_UNSET) return
         if (stallTimes.size >= 2 && deepBufferMs == 0L) deepBufferMs = 25_000
         // From your own Emby server there's nothing lighter to switch to: it just buffers deeper.
         if (stallTimes.size >= 3 && !heavyAsked && embyId == null) {
             heavyAsked = true
+            ui.controls = false
             ui.tooHeavy = mbps(fileBps()) to mbps(connectionBps())
         }
     }
@@ -1326,7 +1339,7 @@ class PlayerActivity : ComponentActivity(), PlayerHost {
 
     /** While waiting for a deep buffer: paused, with progress shown; carries on once it's there. */
     private fun deepBufferTick() {
-        if (deepBufferMs <= 0 || !::player.isInitialized) return
+        if (deepBufferMs <= 0 || !::player.isInitialized || player.isCurrentMediaItemLive) return
         val ahead = player.bufferedPosition - player.currentPosition
         val waiting = player.playbackState == Player.STATE_BUFFERING || deepWaiting
         if (!waiting) { ui.bufferNote = null; return }

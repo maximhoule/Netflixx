@@ -1646,14 +1646,17 @@ class AppModel(private val activity: MainActivity) {
                     return kbps <= 0 || mb * 8 * 1024 / (runtimeMin * 60) <= kbps * 0.7
                 }
                 val others = p.streams.withIndex().filter { it.index != p.index && it.value.sourceKey != cur?.sourceKey }
-                val pick = others.firstOrNull { (_, s) -> fits(s) && (curMb == null || (s.quality.sizeMb ?: 0.0) < curMb * 0.7) }
+                // Not too big for the connection, just a slow source: the next one in the list, same quality is fine.
+                val slowSource = cur != null && fits(cur)
+                val pick = (if (slowSource) others.firstOrNull { (i, _) -> i > p.index } else null)
+                    ?: others.firstOrNull { (_, s) -> fits(s) && (curMb == null || (s.quality.sizeMb ?: 0.0) < curMb * 0.7) }
                     ?: others.firstOrNull { (_, s) -> curMb != null && (s.quality.sizeMb ?: Double.MAX_VALUE) < curMb * 0.7 }
                     ?: others.firstOrNull { (i, _) -> i > p.index }
                 if (pick == null) {
                     toast("No lighter copy found — pick one from the list")
                     play(p.req, chooseSource = true)
                 } else {
-                    toast("Switching to a lighter copy…")
+                    toast(if (slowSource) "Trying another source…" else "Switching to a lighter copy…")
                     loading = p.req
                     playJob = scope.launch { launchStream(p.copy(index = pick.index, attempts = p.attempts + 1)) }
                 }
